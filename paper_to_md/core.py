@@ -16,7 +16,6 @@ from urllib import error, parse, request
 
 API_URL = "https://api.z.ai/api/paas/v4/layout_parsing"
 MARKER_FILENAME = ".paper_to_md_output"
-LEGACY_MARKER_FILENAME = ".pdf_ocr_output"
 ALLOWED_URL_SCHEMES = {"http", "https"}
 
 
@@ -50,7 +49,9 @@ def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None
 
 def atomic_write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=path.parent, delete=False
+    ) as handle:
         handle.write(content)
         temp_path = Path(handle.name)
     temp_path.replace(path)
@@ -239,14 +240,13 @@ def prepare_output_dir(output_root: Path, pdf_name: str) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
     output_dir = output_root / pdf_name
     marker_path = output_dir / MARKER_FILENAME
-    legacy_marker_path = output_dir / LEGACY_MARKER_FILENAME
 
     if output_dir.exists():
         if not output_dir.is_dir():
             raise OCRClientError(
                 f"Output path exists and is not a directory: {output_dir}"
             )
-        if not marker_path.is_file() and not legacy_marker_path.is_file():
+        if not marker_path.is_file():
             raise OCRClientError(
                 f"Refusing to replace non-tool output directory: {output_dir}"
             )

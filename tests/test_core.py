@@ -11,7 +11,6 @@ from unittest import mock
 
 from paper_to_md.cli import collect_pdfs, main, positive_int
 from paper_to_md.core import (
-    LEGACY_MARKER_FILENAME,
     MARKER_FILENAME,
     OCRClientError,
     append_log,
@@ -58,22 +57,6 @@ class PrepareOutputDirTests(unittest.TestCase):
 
             with self.assertRaises(OCRClientError):
                 prepare_output_dir(Path(tmpdir) / "md", "paper")
-
-    def test_replaces_existing_legacy_tool_owned_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "md" / "paper"
-            output_dir.mkdir(parents=True)
-            (output_dir / LEGACY_MARKER_FILENAME).write_text(
-                "generated-by=pdf_ocr\n", encoding="utf-8"
-            )
-            stale_file = output_dir / "old.txt"
-            stale_file.write_text("stale", encoding="utf-8")
-
-            replaced = prepare_output_dir(Path(tmpdir) / "md", "paper")
-
-            self.assertEqual(replaced, output_dir)
-            self.assertTrue((replaced / MARKER_FILENAME).is_file())
-            self.assertFalse(stale_file.exists())
 
 
 class MarkdownRewriteTests(unittest.TestCase):
@@ -258,9 +241,13 @@ class CliTests(unittest.TestCase):
 
             with (
                 mock.patch("paper_to_md.cli.ThreadPoolExecutor", ThreadPoolExecutor),
-                mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result) as m,
+                mock.patch(
+                    "paper_to_md.cli.process_pdf", return_value=fake_result
+                ) as m,
             ):
-                exit_code = main(["--input", str(pdf_dir), "--output", str(pdf_dir / "out")])
+                exit_code = main(
+                    ["--input", str(pdf_dir), "--output", str(pdf_dir / "out")]
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(m.call_count, 2)

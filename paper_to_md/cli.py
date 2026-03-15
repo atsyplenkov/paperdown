@@ -128,7 +128,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Processing 1 PDF: {pdfs[0].name}", file=sys.stderr)
         try:
             summary = process_single(
-                pdfs[0], args.output, args.env_file, args.timeout, args.max_download_bytes
+                pdfs[0],
+                args.output,
+                args.env_file,
+                args.timeout,
+                args.max_download_bytes,
             )
         except OCRClientError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -152,7 +156,11 @@ def main(argv: list[str] | None = None) -> int:
         futures = {
             pool.submit(
                 process_single,
-                pdf, args.output, args.env_file, args.timeout, args.max_download_bytes,
+                pdf,
+                args.output,
+                args.env_file,
+                args.timeout,
+                args.max_download_bytes,
             ): pdf
             for pdf in pdfs
         }
@@ -167,7 +175,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         json.dumps(
-            {"processed": len(results), "failed": len(errors), "results": results, "errors": errors},
+            {
+                "processed": len(results),
+                "failed": len(errors),
+                "results": results,
+                "errors": errors,
+            },
             indent=2,
         )
     )
