@@ -102,7 +102,7 @@ export ZAI_API_KEY="your-api-key"
 paperdown --input path/to/paper.pdf
 ```
 
-If you prefer a file, create a `.env` file (this repository ignores `.env` via `.gitignore`).
+If you prefer a file, create a `.env` file in the project root.
 
 ```dotenv
 ZAI_API_KEY=your-api-key
