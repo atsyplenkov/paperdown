@@ -5,8 +5,5 @@
 **/__pycache__/
 *.pyc
 /md/
-/md3/
-.desloppify/
-.agents/
-/md_new/
+.codex/
 /pdf/

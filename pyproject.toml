@@ -1,9 +1,0 @@
-[project]
-name = "paper_to_md"
-version = "0.1.0"
-description = "Convert papers in PDF to Markdown with figures using Z.AI OCR."
-requires-python = ">=3.12"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
