@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -255,7 +256,10 @@ class CliTests(unittest.TestCase):
             fake_result.usage = None
             fake_result.log_path = Path("/out/a/log.jsonl")
 
-            with mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result) as m:
+            with (
+                mock.patch("paper_to_md.cli.ProcessPoolExecutor", ThreadPoolExecutor),
+                mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result) as m,
+            ):
                 exit_code = main(["--input", str(pdf_dir), "--output", str(pdf_dir / "out")])
 
             self.assertEqual(exit_code, 0)

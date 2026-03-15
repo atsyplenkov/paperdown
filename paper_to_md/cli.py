@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .core import OCRClientError, process_pdf
@@ -131,8 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict] = []
     errors: list[dict] = []
     workers = min(args.workers, len(pdfs))
+    print(f"Processing {len(pdfs)} PDFs with {workers} workers...", file=sys.stderr)
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
                 process_single,
@@ -144,8 +145,10 @@ def main(argv: list[str] | None = None) -> int:
             pdf = futures[future]
             try:
                 results.append(future.result())
+                print(f"  done: {pdf.name}", file=sys.stderr)
             except OCRClientError as exc:
                 errors.append({"pdf": str(pdf), "error": str(exc)})
+                print(f"  failed: {pdf.name}: {exc}", file=sys.stderr)
 
     print(
         json.dumps(

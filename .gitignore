@@ -5,6 +5,6 @@
 **/__pycache__/
 *.pyc
 /md/
-/md2/
+/md3/
 .desloppify/
 .agents/
