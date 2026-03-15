@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
-
 API_URL = "https://api.z.ai/api/paas/v4/layout_parsing"
 MARKER_FILENAME = ".paper_to_md_output"
 LEGACY_MARKER_FILENAME = ".pdf_ocr_output"
@@ -30,7 +29,7 @@ class ProcessResult:
     remote_figure_links: int
     image_blocks: int
     usage: dict[str, Any] | None
-    run_log_path: Path
+    log_path: Path
 
 
 def process_pdf(
@@ -66,9 +65,9 @@ def process_pdf(
     markdown_path = output_dir / "index.md"
     markdown_path.write_text(markdown, encoding="utf-8")
     usage = extract_usage(response)
-    run_log_path = output_dir / "run_log.jsonl"
-    append_run_log(
-        run_log_path=run_log_path,
+    log_path = output_dir / "log.jsonl"
+    append_log(
+        log_path=log_path,
         entry={
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "pdf_path": str(pdf_path),
@@ -88,7 +87,7 @@ def process_pdf(
         remote_figure_links=remote_figure_links,
         image_blocks=image_blocks,
         usage=usage,
-        run_log_path=run_log_path,
+        log_path=log_path,
     )
 
 
@@ -167,9 +166,7 @@ def validate_layout_response(data: dict[str, Any]) -> tuple[str, list[Any]]:
 
     layout_details = data.get("layout_details")
     if not isinstance(layout_details, list):
-        raise OCRClientError(
-            "Z.AI OCR response is missing list field 'layout_details'"
-        )
+        raise OCRClientError("Z.AI OCR response is missing list field 'layout_details'")
 
     return markdown, layout_details
 
@@ -181,9 +178,9 @@ def extract_usage(data: dict[str, Any]) -> dict[str, Any] | None:
     return usage
 
 
-def append_run_log(run_log_path: Path, entry: dict[str, Any]) -> None:
-    run_log_path.parent.mkdir(parents=True, exist_ok=True)
-    with run_log_path.open("a", encoding="utf-8") as handle:
+def append_log(log_path: Path, entry: dict[str, Any]) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False))
         handle.write("\n")
 
@@ -196,7 +193,9 @@ def prepare_output_dir(output_root: Path, pdf_name: str) -> Path:
 
     if output_dir.exists():
         if not output_dir.is_dir():
-            raise OCRClientError(f"Output path exists and is not a directory: {output_dir}")
+            raise OCRClientError(
+                f"Output path exists and is not a directory: {output_dir}"
+            )
         if not marker_path.is_file() and not legacy_marker_path.is_file():
             raise OCRClientError(
                 f"Refusing to replace non-tool output directory: {output_dir}"

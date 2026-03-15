@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
                 "remote_figure_links": result.remote_figure_links,
                 "image_blocks": result.image_blocks,
                 "usage": result.usage,
-                "run_log_path": str(result.run_log_path),
+                "log_path": str(result.log_path),
             },
             indent=2,
         )

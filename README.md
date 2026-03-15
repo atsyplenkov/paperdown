@@ -8,7 +8,7 @@ Convert academic papers in PDF into Markdown with figure assets using Z.AI GLM-O
 - Save markdown into `md/<PDF_NAME>/index.md`
 - Save figure files into `md/<PDF_NAME>/figures/`
 - Rewrite markdown and HTML `<img src=...>` links to local figure paths
-- Persist run metadata and token usage into `md/<PDF_NAME>/run_log.jsonl`
+- Persist run metadata and token usage into `md/<PDF_NAME>/log.jsonl`
 
 ## Requirements
 

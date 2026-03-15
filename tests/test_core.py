@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 from unittest import mock
-from contextlib import redirect_stderr
 
 from paper_to_md.cli import main
 from paper_to_md.core import (
     LEGACY_MARKER_FILENAME,
     MARKER_FILENAME,
     OCRClientError,
-    append_run_log,
-    localize_figures,
+    append_log,
     load_api_key,
+    localize_figures,
     prepare_output_dir,
     replace_image_urls,
     validate_layout_response,
@@ -126,7 +126,9 @@ class MarkdownRewriteTests(unittest.TestCase):
 
     def test_localize_figures_keeps_remote_url_when_download_fails(self) -> None:
         markdown = "![Figure](https://example.com/figure.png)"
-        layout_details = [[{"label": "image", "content": "https://example.com/figure.png"}]]
+        layout_details = [
+            [{"label": "image", "content": "https://example.com/figure.png"}]
+        ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             figures_dir = Path(tmpdir) / "figures"
@@ -145,9 +147,13 @@ class MarkdownRewriteTests(unittest.TestCase):
         self.assertEqual(remote_links, 1)
         self.assertEqual(image_blocks, 1)
 
-    def test_localize_figures_rewrites_to_local_path_when_download_succeeds(self) -> None:
+    def test_localize_figures_rewrites_to_local_path_when_download_succeeds(
+        self,
+    ) -> None:
         markdown = "![Figure](https://example.com/figure.png)"
-        layout_details = [[{"label": "image", "content": "https://example.com/figure.png"}]]
+        layout_details = [
+            [{"label": "image", "content": "https://example.com/figure.png"}]
+        ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             figures_dir = Path(tmpdir) / "figures"
@@ -194,7 +200,9 @@ class CliTests(unittest.TestCase):
     def test_cli_returns_clean_error_message(self) -> None:
         stderr = StringIO()
         with (
-            mock.patch("paper_to_md.cli.process_pdf", side_effect=OCRClientError("boom")),
+            mock.patch(
+                "paper_to_md.cli.process_pdf", side_effect=OCRClientError("boom")
+            ),
             redirect_stderr(stderr),
         ):
             exit_code = main(["paper.pdf"])
@@ -204,12 +212,12 @@ class CliTests(unittest.TestCase):
 
 
 class RunLogTests(unittest.TestCase):
-    def test_append_run_log_writes_jsonl_entries(self) -> None:
+    def test_append_log_writes_jsonl_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_log = Path(tmpdir) / "md" / "run_log.jsonl"
-            append_run_log(run_log, {"a": 1})
-            append_run_log(run_log, {"b": 2})
-            lines = run_log.read_text(encoding="utf-8").strip().splitlines()
+            log = Path(tmpdir) / "md" / "log.jsonl"
+            append_log(log, {"a": 1})
+            append_log(log, {"b": 2})
+            lines = log.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(lines[0], '{"a": 1}')
             self.assertEqual(lines[1], '{"b": 2}')
 
