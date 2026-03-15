@@ -44,10 +44,10 @@ paperdown --input pdf/ --output md/ --workers 4 --overwrite
 
 ## Install
 
-Install from crates.io:
+<!--Install from crates.io:-->
 
 ```bash
-cargo install paperdown
+cargo install --git https://github.com/atsyplenkov/paperdown.git
 ```
 
 Install from source (this repository):
@@ -93,5 +93,3 @@ Options:
 ## Cost example
 
 The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the Batista et al. (2022) paper run with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per paper.
-
-The cost calculation is `79,080 / 1,000,000 * 0.03`.
