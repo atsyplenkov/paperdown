@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -7,12 +8,14 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from paper_to_md.cli import main
+from paper_to_md.cli import main, positive_int
 from paper_to_md.core import (
     LEGACY_MARKER_FILENAME,
     MARKER_FILENAME,
     OCRClientError,
     append_log,
+    call_layout_parsing,
+    download_figure,
     load_api_key,
     localize_figures,
     prepare_output_dir,
@@ -196,7 +199,29 @@ class ApiKeyLoadingTests(unittest.TestCase):
                 self.assertEqual(load_api_key(env_file), "test-key")
 
 
+class NetworkBoundaryTests(unittest.TestCase):
+    def test_call_layout_parsing_rejects_non_http_api_url(self) -> None:
+        with mock.patch("paper_to_md.core.API_URL", "file:///tmp/mock.json"):
+            with self.assertRaises(OCRClientError):
+                call_layout_parsing("key", {"model": "glm-ocr"}, timeout=1)
+
+    def test_download_figure_rejects_non_http_url_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = download_figure(
+                remote_url="file:///tmp/pic.png",
+                figures_dir=Path(tmpdir),
+                base_name="fig-001-001",
+                timeout=1,
+                max_download_bytes=1024,
+            )
+        self.assertIsNone(local)
+
+
 class CliTests(unittest.TestCase):
+    def test_positive_int_rejects_non_numeric_value_with_argparse_error(self) -> None:
+        with self.assertRaises(argparse.ArgumentTypeError):
+            positive_int("abc")
+
     def test_cli_returns_clean_error_message(self) -> None:
         stderr = StringIO()
         with (

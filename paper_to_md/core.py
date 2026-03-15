@@ -6,6 +6,7 @@ import mimetypes
 import os
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from urllib import error, parse, request
 API_URL = "https://api.z.ai/api/paas/v4/layout_parsing"
 MARKER_FILENAME = ".paper_to_md_output"
 LEGACY_MARKER_FILENAME = ".pdf_ocr_output"
+ALLOWED_URL_SCHEMES = {"http", "https"}
 
 
 class OCRClientError(RuntimeError):
@@ -30,6 +32,37 @@ class ProcessResult:
     image_blocks: int
     usage: dict[str, Any] | None
     log_path: Path
+
+
+def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding=encoding,
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        handle.write(content)
+        temp_path = Path(handle.name)
+    temp_path.replace(path)
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as handle:
+        handle.write(content)
+        temp_path = Path(handle.name)
+    temp_path.replace(path)
+
+
+def is_allowed_url_scheme(url: str) -> bool:
+    scheme = parse.urlparse(url).scheme.lower()
+    return scheme in ALLOWED_URL_SCHEMES
+
+
+def open_request(req: request.Request, timeout: int) -> Any:
+    opener = request.build_opener()
+    return opener.open(req, timeout=timeout)
 
 
 def process_pdf(
@@ -63,7 +96,7 @@ def process_pdf(
     )
 
     markdown_path = output_dir / "index.md"
-    markdown_path.write_text(markdown, encoding="utf-8")
+    atomic_write_text(markdown_path, markdown)
     usage = extract_usage(response)
     log_path = output_dir / "log.jsonl"
     append_log(
@@ -127,6 +160,8 @@ def build_payload(pdf_path: Path) -> dict[str, Any]:
 def call_layout_parsing(
     api_key: str, payload: dict[str, Any], timeout: int
 ) -> dict[str, Any]:
+    if not is_allowed_url_scheme(API_URL):
+        raise OCRClientError(f"Unsupported API URL scheme: {API_URL}")
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         API_URL,
@@ -139,7 +174,7 @@ def call_layout_parsing(
     )
 
     try:
-        with request.urlopen(req, timeout=timeout) as response:
+        with open_request(req, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
     except error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
@@ -203,7 +238,7 @@ def prepare_output_dir(output_root: Path, pdf_name: str) -> Path:
         shutil.rmtree(output_dir)
 
     output_dir.mkdir(parents=True, exist_ok=False)
-    marker_path.write_text("generated-by=paper_to_md\n", encoding="utf-8")
+    atomic_write_text(marker_path, "generated-by=paper_to_md\n")
     return output_dir
 
 
@@ -286,6 +321,8 @@ def download_figure(
     timeout: int,
     max_download_bytes: int,
 ) -> Path | None:
+    if not is_allowed_url_scheme(remote_url):
+        return None
     req = request.Request(
         remote_url,
         headers={"User-Agent": "paper_to_md/0.1.0"},
@@ -293,7 +330,7 @@ def download_figure(
     )
 
     try:
-        with request.urlopen(req, timeout=timeout) as response:
+        with open_request(req, timeout=timeout) as response:
             content_type = response.headers.get_content_type()
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > max_download_bytes:
@@ -310,7 +347,7 @@ def download_figure(
 
     suffix = content_type_to_suffix(content_type) or url_suffix(remote_url) or ".img"
     local_path = figures_dir / f"{base_name}{suffix}"
-    local_path.write_bytes(data)
+    atomic_write_bytes(local_path, data)
     return local_path
 
 

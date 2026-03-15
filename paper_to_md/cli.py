@@ -7,9 +7,14 @@ from pathlib import Path
 
 from .core import OCRClientError, process_pdf
 
+DEFAULT_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+
 
 def positive_int(value: str) -> int:
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a positive integer") from exc
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be a positive integer")
     return parsed
@@ -42,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-download-bytes",
         type=positive_int,
-        default=20 * 1024 * 1024,
+        default=DEFAULT_MAX_DOWNLOAD_BYTES,
         help="Maximum bytes to download for any single remote figure.",
     )
     return parser
