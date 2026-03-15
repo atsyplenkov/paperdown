@@ -3,30 +3,14 @@ mod core;
 
 use anyhow::Result;
 use clap::Parser;
-use core::{collect_pdfs, PdfSummary, ProgressCallback, ProgressEvent};
+use core::{collect_pdfs, ProgressCallback, ProgressEvent};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use serde::Serialize;
 use std::io::IsTerminal;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-
-#[derive(Debug, Serialize)]
-struct BatchFailure {
-    pdf: String,
-    error: String,
-}
-
-#[derive(Debug, Serialize)]
-struct BatchReport {
-    processed: usize,
-    failed: usize,
-    results: Vec<PdfSummary>,
-    errors: Vec<BatchFailure>,
-}
 
 #[tokio::main]
 async fn main() {
@@ -55,7 +39,7 @@ async fn run() -> Result<i32> {
         if args.verbose {
             eprintln!("Processing 1 PDF: {}", pdfs[0].display());
         }
-        let summary = core::process_pdf(
+        core::process_pdf(
             &pdfs[0],
             &args.output,
             &args.env_file,
@@ -65,7 +49,6 @@ async fn run() -> Result<i32> {
             progress_callback(&pdfs[0], progress.clone()),
         )
         .await?;
-        print_json_stdout(&summary)?;
         return Ok(0);
     }
 
@@ -100,45 +83,22 @@ async fn run() -> Result<i32> {
     .collect::<Vec<_>>()
     .await;
 
-    let mut success = Vec::new();
-    let mut errors = Vec::new();
+    let mut failed_count = 0usize;
     for (pdf, result) in results {
         match result {
-            Ok(summary) => {
+            Ok(_) => {
                 if args.verbose {
                     eprintln!("  done: {}", pdf.display());
                 }
-                success.push(summary);
             }
             Err(err) => {
                 eprintln!("  failed: {}: {err}", pdf.display());
-                errors.push(BatchFailure {
-                    pdf: pdf.display().to_string(),
-                    error: err.to_string(),
-                });
+                failed_count += 1;
             }
         }
     }
 
-    let report = BatchReport {
-        processed: success.len(),
-        failed: errors.len(),
-        results: success,
-        errors,
-    };
-    print_json_stdout(&report)?;
-    Ok(if report.failed > 0 { 1 } else { 0 })
-}
-
-fn print_json_stdout<T: Serialize>(value: &T) -> Result<()> {
-    let mut out = std::io::stdout();
-    write_json(&mut out, value)
-}
-
-fn write_json<T: Serialize, W: Write>(out: &mut W, value: &T) -> Result<()> {
-    let rendered = serde_json::to_string_pretty(value)?;
-    writeln!(out, "{rendered}")?;
-    Ok(())
+    Ok(if failed_count > 0 { 1 } else { 0 })
 }
 
 fn stderr_is_tty() -> bool {
@@ -147,7 +107,7 @@ fn stderr_is_tty() -> bool {
 
 fn progress_callback(pdf: &Path, multi: Option<Arc<MultiProgress>>) -> Option<ProgressCallback> {
     let multi = multi?;
-    let label = pdf.display().to_string();
+    let label = display_path(pdf);
     let spinner = multi.add(ProgressBar::new_spinner());
     spinner.set_style(
         ProgressStyle::with_template("{spinner:.green} {msg}")
@@ -206,27 +166,35 @@ fn progress_callback(pdf: &Path, multi: Option<Arc<MultiProgress>>) -> Option<Pr
     Some(Arc::new(cb))
 }
 
+fn display_path(path: &Path) -> String {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(rel) = path.strip_prefix(cwd) {
+            return rel.display().to_string();
+        }
+    }
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
-    fn write_json_produces_parsable_payload_with_expected_keys() {
-        let value = BatchReport {
-            processed: 1,
-            failed: 0,
-            results: Vec::new(),
-            errors: Vec::new(),
-        };
+    fn display_path_uses_relative_path_when_possible() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let abs = cwd.join("pdf").join("paper.pdf");
+        assert_eq!(
+            display_path(&abs),
+            PathBuf::from("pdf/paper.pdf").display().to_string()
+        );
+    }
 
-        let mut out = Vec::<u8>::new();
-        write_json(&mut out, &value).expect("write json");
-        let rendered = String::from_utf8(out).expect("utf8");
-        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
-
-        assert_eq!(parsed["processed"], 1);
-        assert_eq!(parsed["failed"], 0);
-        assert!(parsed.get("results").is_some());
-        assert!(parsed.get("errors").is_some());
+    #[test]
+    fn display_path_falls_back_to_file_name() {
+        let path = PathBuf::from("/tmp/example.pdf");
+        assert_eq!(display_path(&path), "example.pdf");
     }
 }
