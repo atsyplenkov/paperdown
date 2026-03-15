@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from paper_to_md.cli import main, positive_int
+from paper_to_md.cli import collect_pdfs, main, positive_int
 from paper_to_md.core import (
     LEGACY_MARKER_FILENAME,
     MARKER_FILENAME,
@@ -223,17 +223,84 @@ class CliTests(unittest.TestCase):
             positive_int("abc")
 
     def test_cli_returns_clean_error_message(self) -> None:
-        stderr = StringIO()
-        with (
-            mock.patch(
-                "paper_to_md.cli.process_pdf", side_effect=OCRClientError("boom")
-            ),
-            redirect_stderr(stderr),
-        ):
-            exit_code = main(["paper.pdf"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf = Path(tmpdir) / "paper.pdf"
+            pdf.write_bytes(b"%PDF")
 
-        self.assertEqual(exit_code, 1)
-        self.assertEqual(stderr.getvalue().strip(), "error: boom")
+            stderr = StringIO()
+            with (
+                mock.patch(
+                    "paper_to_md.cli.process_pdf", side_effect=OCRClientError("boom")
+                ),
+                redirect_stderr(stderr),
+            ):
+                exit_code = main(["--input", str(pdf)])
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stderr.getvalue().strip(), "error: boom")
+
+    def test_cli_processes_directory_of_pdfs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_dir = Path(tmpdir)
+            (pdf_dir / "a.pdf").write_bytes(b"%PDF")
+            (pdf_dir / "b.pdf").write_bytes(b"%PDF")
+            (pdf_dir / "notes.txt").write_bytes(b"text")
+
+            fake_result = mock.MagicMock()
+            fake_result.output_dir = Path("/out/a")
+            fake_result.markdown_path = Path("/out/a/index.md")
+            fake_result.downloaded_figures = 0
+            fake_result.remote_figure_links = 0
+            fake_result.image_blocks = 0
+            fake_result.usage = None
+            fake_result.log_path = Path("/out/a/log.jsonl")
+
+            with mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result) as m:
+                exit_code = main(["--input", str(pdf_dir), "--output", str(pdf_dir / "out")])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(m.call_count, 2)
+
+    def test_cli_reports_error_for_empty_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                exit_code = main(["--input", tmpdir])
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("No PDF files found", stderr.getvalue())
+
+
+class CollectPdfsTests(unittest.TestCase):
+    def test_single_pdf_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf = Path(tmpdir) / "paper.pdf"
+            pdf.write_bytes(b"%PDF")
+            result = collect_pdfs(pdf)
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].name, "paper.pdf")
+
+    def test_rejects_non_pdf_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            txt = Path(tmpdir) / "notes.txt"
+            txt.write_bytes(b"text")
+            with self.assertRaises(OCRClientError):
+                collect_pdfs(txt)
+
+    def test_directory_returns_only_pdfs_sorted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            d = Path(tmpdir)
+            (d / "b.pdf").write_bytes(b"%PDF")
+            (d / "a.pdf").write_bytes(b"%PDF")
+            (d / "readme.txt").write_bytes(b"text")
+            result = collect_pdfs(d)
+            self.assertEqual(len(result), 2)
+            self.assertEqual(result[0].name, "a.pdf")
+            self.assertEqual(result[1].name, "b.pdf")
+
+    def test_nonexistent_path_raises(self) -> None:
+        with self.assertRaises(OCRClientError):
+            collect_pdfs(Path("/nonexistent/path"))
 
 
 class RunLogTests(unittest.TestCase):
@@ -249,3 +316,4 @@ class RunLogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

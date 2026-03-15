@@ -18,11 +18,17 @@ You need Python 3.12 or newer and `uv`. You also need `ZAI_API_KEY` available vi
 
 ## Quick start
 
-This converts a local PDF and writes results under `md/`.
+Process a single PDF:
 
 ```bash
 uv sync
-uv run python -m paper_to_md "pdf/your-paper.pdf"
+uv run python -m paper_to_md --input "pdf/your-paper.pdf"
+```
+
+Batch-process a directory of PDFs in parallel:
+
+```bash
+uv run python -m paper_to_md --input pdf/ --output md/ --workers 4
 ```
 
 ## CLI
@@ -43,7 +49,7 @@ uv run python -m unittest discover -s tests -v
 
 ## Cost example
 
-The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the Batista et al. (2022) paper run with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents.
+The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the Batista et al. (2022) paper run with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per paper.
 
 The cost calculation is `79,080 / 1,000,000 * 0.03`.
 
@@ -53,8 +59,5 @@ The tool replaces an output directory only if it contains a tool ownership marke
 
 ## TODO
 * add verbose mode
-* control `--input` and `--output` flags
-* add parallel execution
-* add batch processsing
 * remove the `.pdf_ocr_output`
 * add examples

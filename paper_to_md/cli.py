@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .core import OCRClientError, process_pdf
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 8)
 
 
 def positive_int(value: str) -> int:
@@ -23,14 +26,19 @@ def positive_int(value: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="paper_to_md",
-        description="Convert a local PDF to markdown with Z.AI GLM-OCR.",
+        description="Convert academic PDFs to markdown with Z.AI GLM-OCR.",
     )
-    parser.add_argument("pdf_path", type=Path, help="Path to the input PDF.")
     parser.add_argument(
-        "--output-root",
+        "--input",
+        type=Path,
+        required=True,
+        help="Path to a single PDF or a directory of PDFs.",
+    )
+    parser.add_argument(
+        "--output",
         type=Path,
         default=Path("md"),
-        help="Root directory for generated markdown output.",
+        help="Output directory for generated markdown.",
     )
     parser.add_argument(
         "--env-file",
@@ -50,7 +58,53 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_DOWNLOAD_BYTES,
         help="Maximum bytes to download for any single remote figure.",
     )
+    parser.add_argument(
+        "--workers",
+        type=positive_int,
+        default=DEFAULT_MAX_WORKERS,
+        help="Maximum parallel workers for batch processing.",
+    )
     return parser
+
+
+def collect_pdfs(input_path: Path) -> list[Path]:
+    input_path = input_path.resolve()
+    if input_path.is_file():
+        if input_path.suffix.lower() != ".pdf":
+            raise OCRClientError(f"Input must be a PDF: {input_path}")
+        return [input_path]
+    if input_path.is_dir():
+        pdfs = sorted(input_path.glob("*.pdf"))
+        if not pdfs:
+            raise OCRClientError(f"No PDF files found in: {input_path}")
+        return pdfs
+    raise OCRClientError(f"Input path does not exist: {input_path}")
+
+
+def process_single(
+    pdf_path: Path,
+    output: Path,
+    env_file: Path,
+    timeout: int,
+    max_download_bytes: int,
+) -> dict:
+    result = process_pdf(
+        pdf_path=pdf_path,
+        output_root=output,
+        env_file=env_file,
+        timeout=timeout,
+        max_download_bytes=max_download_bytes,
+    )
+    return {
+        "pdf": str(pdf_path),
+        "output_dir": str(result.output_dir),
+        "markdown_path": str(result.markdown_path),
+        "downloaded_figures": result.downloaded_figures,
+        "remote_figure_links": result.remote_figure_links,
+        "image_blocks": result.image_blocks,
+        "usage": result.usage,
+        "log_path": str(result.log_path),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,29 +112,45 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        result = process_pdf(
-            pdf_path=args.pdf_path,
-            output_root=args.output_root,
-            env_file=args.env_file,
-            timeout=args.timeout,
-            max_download_bytes=args.max_download_bytes,
-        )
+        pdfs = collect_pdfs(args.input)
     except OCRClientError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    if len(pdfs) == 1:
+        try:
+            summary = process_single(
+                pdfs[0], args.output, args.env_file, args.timeout, args.max_download_bytes
+            )
+        except OCRClientError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    results: list[dict] = []
+    errors: list[dict] = []
+    workers = min(args.workers, len(pdfs))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                process_single,
+                pdf, args.output, args.env_file, args.timeout, args.max_download_bytes,
+            ): pdf
+            for pdf in pdfs
+        }
+        for future in as_completed(futures):
+            pdf = futures[future]
+            try:
+                results.append(future.result())
+            except OCRClientError as exc:
+                errors.append({"pdf": str(pdf), "error": str(exc)})
+
     print(
         json.dumps(
-            {
-                "output_dir": str(result.output_dir),
-                "markdown_path": str(result.markdown_path),
-                "downloaded_figures": result.downloaded_figures,
-                "remote_figure_links": result.remote_figure_links,
-                "image_blocks": result.image_blocks,
-                "usage": result.usage,
-                "log_path": str(result.log_path),
-            },
+            {"processed": len(results), "failed": len(errors), "results": results, "errors": errors},
             indent=2,
         )
     )
-    return 0
+    return 1 if errors else 0
