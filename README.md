@@ -1,4 +1,4 @@
-<h1 align=center><code>paper_to_md</code></h1>
+<h1 align=center><code>paperdown</code></h1>
 
 <p align="center">
     <a href="https://github.com/atsyplenkov/paperdown/releases">
