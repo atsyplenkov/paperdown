@@ -247,7 +247,7 @@ mod tests {
         let abs = cwd.join("pdf").join("paper.pdf");
         assert_eq!(
             display_path(&abs),
-            PathBuf::from("pdf/paper.pdf").display().to_string()
+            PathBuf::from("pdf").join("paper.pdf").display().to_string()
         );
     }
 
