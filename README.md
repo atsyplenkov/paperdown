@@ -1,5 +1,10 @@
 <h1 align=center><code>paper_to_md</code></h1>
 
+<p align="center">
+     <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
+     <a href="https://github.com/atsyplenkov/paper_to_md/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paper_to_md/ci.yml?style=flat&labelColor=1C2C2E&color=88AB26&logo=GitHub%20Actions&logoColor=white&label=CI"></a>
+</p>
+
 A CLI tool that converts academic PDFs into Markdown using the Z.AI OCR with figures saved locally.
 
 If you work with papers, you already know the annoying part is not the OCR itself. It is the cleanup. Tables go missing, table structure gets mixed up, and formulas sometimes come back as plain text noise. You end up spending more time fixing the output than reading the paper.
