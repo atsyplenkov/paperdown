@@ -89,6 +89,27 @@ Options:
 
 `paperdown` reads `ZAI_API_KEY` from environment first. If not found, it reads the value from `--env-file`.
 
+### Get a key
+
+Create an account in the Z.AI console, then generate an API key from your account settings. In most dashboards this is under Settings, then API keys. Create a new key and copy it once, as you will not be able to view it again.
+
+### Store it
+
+The simplest option is to set `ZAI_API_KEY` in your shell environment.
+
+```bash
+export ZAI_API_KEY="your-api-key"
+paperdown --input path/to/paper.pdf
+```
+
+If you prefer a file, create a `.env` file (this repository ignores `.env` via `.gitignore`).
+
+```dotenv
+ZAI_API_KEY=your-api-key
+```
+
+Then run `paperdown` normally, or point to a different file with `--env-file`.
+
 ## Cost
 
 The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the average size scientific paper ([Batista et al., 2022](https://hess.copernicus.org/articles/26/3753/2022/)) process with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per article.
