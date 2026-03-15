@@ -298,13 +298,13 @@ fn prepare_output_paths(
     if !overwrite {
         if markdown_path.exists() {
             return Err(anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
+                "Output already exists: {}. Re-run with \x1b[1;33m--overwrite\x1b[0m",
                 markdown_path.display()
             ));
         }
         if figures_dir.exists() {
             return Err(anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
+                "Output already exists: {}. Re-run with \x1b[1;33m--overwrite\x1b[0m",
                 figures_dir.display()
             ));
         }
