@@ -2,6 +2,14 @@
 name = "paperdown"
 version = "0.1.0"
 edition = "2021"
+description = "Convert paper PDFs into markdown with local figures using Z.AI OCR."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/atsyplenkov/paperdown"
+homepage = "https://github.com/atsyplenkov/paperdown"
+documentation = "https://docs.rs/paperdown"
+keywords = ["ocr", "pdf", "markdown", "cli"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "paperdown"
