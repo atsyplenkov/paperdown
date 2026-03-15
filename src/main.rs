@@ -9,7 +9,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use serde::Serialize;
 use std::io::IsTerminal;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -145,7 +145,7 @@ fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
 }
 
-fn progress_callback(pdf: &PathBuf, multi: Option<Arc<MultiProgress>>) -> Option<ProgressCallback> {
+fn progress_callback(pdf: &Path, multi: Option<Arc<MultiProgress>>) -> Option<ProgressCallback> {
     let multi = multi?;
     let label = pdf.display().to_string();
     let spinner = multi.add(ProgressBar::new_spinner());
