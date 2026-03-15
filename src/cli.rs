@@ -2,38 +2,86 @@ use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "paperdown", version, about = "Convert PDF inputs to markdown")]
+#[command(
+    name = "paperdown",
+    version,
+    about = "Convert academic PDF files into markdown with local figures via Z.AI OCR.",
+    long_about = "paperdown converts one PDF or a directory of PDFs into markdown output folders.\n\n\
+For each PDF, it creates:\n\
+- <output>/<pdf_stem>/index.md\n\
+- <output>/<pdf_stem>/figures/\n\
+- <output>/<pdf_stem>/log.jsonl\n\n\
+API key lookup order:\n\
+1) ZAI_API_KEY from environment\n\
+2) ZAI_API_KEY from --env-file",
+    after_help = "Examples:\n  \
+paperdown --input pdf/paper.pdf\n  \
+paperdown --input pdf/ --output md/ --workers 4\n  \
+paperdown --input pdf/ --output md/ --overwrite\n\n\
+Notes:\n  \
+Without --overwrite, existing index.md or figures/ causes a failure.\n  \
+Progress bars are shown on stderr only when running in a TTY."
+)]
 pub struct Cli {
-    #[arg(long, value_name = "PATH", required = true)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        required = true,
+        help = "Input path: a single .pdf file or a directory containing .pdf files."
+    )]
     pub input: PathBuf,
 
-    #[arg(long, default_value = "md")]
+    #[arg(
+        long,
+        default_value = "md",
+        help = "Output root directory for generated markdown folders."
+    )]
     pub output: PathBuf,
 
-    #[arg(long = "env-file", default_value = ".env")]
+    #[arg(
+        long = "env-file",
+        default_value = ".env",
+        help = "Path to .env file used only if ZAI_API_KEY is not already set."
+    )]
     pub env_file: PathBuf,
 
-    #[arg(long, default_value_t = 180u64, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(
+        long,
+        default_value_t = 180u64,
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "HTTP timeout in seconds for OCR requests and figure downloads."
+    )]
     pub timeout: u64,
 
     #[arg(
         long = "max-download-bytes",
         default_value_t = 20_971_520u64,
-        value_parser = clap::value_parser!(u64).range(1..)
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Maximum allowed size (bytes) for each downloaded figure file."
     )]
     pub max_download_bytes: u64,
 
     #[arg(
         long,
         default_value_t = default_workers(),
-        value_parser = parse_positive_usize
+        value_parser = parse_positive_usize,
+        help = "Maximum number of PDFs processed concurrently in batch mode."
     )]
     pub workers: usize,
 
-    #[arg(short = 'v', long, action = ArgAction::SetTrue)]
+    #[arg(
+        short = 'v',
+        long,
+        action = ArgAction::SetTrue,
+        help = "Enable verbose progress messages on stderr."
+    )]
     pub verbose: bool,
 
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Replace existing managed output artifacts (index.md and figures/)."
+    )]
     pub overwrite: bool,
 }
 
@@ -57,7 +105,7 @@ fn parse_positive_usize(value: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn default_workers_formula_bounds() {
@@ -90,5 +138,15 @@ mod tests {
         ])
         .is_err());
         assert!(Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--workers", "0"]).is_err());
+    }
+
+    #[test]
+    fn help_text_contains_examples_and_key_guidance() {
+        let mut cmd = Cli::command();
+        let help = cmd.render_long_help().to_string();
+        assert!(help.contains("Examples:"));
+        assert!(help.contains("--overwrite"));
+        assert!(help.contains("ZAI_API_KEY"));
+        assert!(help.contains("single .pdf file or a directory"));
     }
 }
