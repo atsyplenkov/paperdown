@@ -61,6 +61,3 @@ The cost calculation is `79,080 / 1,000,000 * 0.03`.
 ## Notes
 
 The tool replaces an output directory only if it contains a tool ownership marker, so it does not accidentally delete unrelated folders.
-
-## TODO
-* add examples
