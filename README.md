@@ -1,19 +1,19 @@
 <h1 align=center><code>paperdown</code></h1>
 
 <p align="center">
-    <a href="https://github.com/atsyplenkov/paperdown/releases">
+    <!--<a href="https://github.com/atsyplenkov/paperdown/releases">
         <img src="https://img.shields.io/github/v/release/atsyplenkov/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub&logoColor=white"></a>
     <a href="https://crates.io/crates/paperdown/">
-        <img src="https://img.shields.io/crates/v/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>
+        <img src="https://img.shields.io/crates/v/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>-->
     <a href="https://codecov.io/gh/atsyplenkov/paperdown">
         <img src="https://img.shields.io/codecov/c/gh/atsyplenkov/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Codecov&logoColor=white"></a>
-    <br>
+    <!--<br>-->
     <a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-ci.yml">
         <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-ci.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white"></a>
-    <a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-cd.yml">
-        <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-cd.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white&label=deploy"></a>
-    <a href="https://docs.rs/paperdown/">
-        <img src="https://img.shields.io/docsrs/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>
+    <!--<a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-cd.yml">
+        <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-cd.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white&label=deploy"></a>-->
+    <!--<a href="https://docs.rs/paperdown/">
+        <img src="https://img.shields.io/docsrs/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>-->
     <br>
 </p>
 
@@ -27,8 +27,7 @@ This project exists because Docling and Marker are both good tools, but in pract
 
 - Async OCR requests and batch PDF processing
 - Concurrent figure downloads per PDF
-- Safe overwrite behavior with explicit `--overwrite`
-- Progress display on `stderr` (TTY only)
+- Fast! It takes approximately 25 sec per batch. The speed depends on the z.ai API availability. See 
 
 ## Usage
 
@@ -90,6 +89,6 @@ Options:
 
 `paperdown` reads `ZAI_API_KEY` from environment first. If not found, it reads the value from `--env-file`.
 
-## Cost example
+## Cost
 
-The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the Batista et al. (2022) paper run with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per paper.
+The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the average size scientific paper ([Batista et al., 2022](https://hess.copernicus.org/articles/26/3753/2022/)) process with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per article.
