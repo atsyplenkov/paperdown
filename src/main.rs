@@ -17,7 +17,7 @@ async fn main() {
     let code = match run().await {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("error: {err}");
+            eprintln!("error: {}", format_error_for_stderr(&err.to_string()));
             1
         }
     };
@@ -97,7 +97,8 @@ async fn run() -> Result<i32> {
                 }
             }
             Err(err) => {
-                eprintln!("  failed: {}: {err}", pdf.display());
+                let rendered = format_error_for_stderr(&err.to_string());
+                eprintln!("  failed: {}: {rendered}", pdf.display());
                 failed_count += 1;
             }
         }
@@ -109,6 +110,13 @@ async fn run() -> Result<i32> {
 
 fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
+}
+
+fn format_error_for_stderr(message: &str) -> String {
+    if stderr_is_tty() {
+        return message.replace("--overwrite", "\x1b[1;33m--overwrite\x1b[0m");
+    }
+    message.to_string()
 }
 
 fn stdout_is_tty() -> bool {

@@ -143,12 +143,13 @@ pub async fn process_pdf(
         return Err(anyhow!("Input must be a PDF: {}", pdf_path.display()));
     }
     let prepared = prepare_output_paths(output_root, &pdf_path, overwrite)?;
+    let client = reqwest::Client::builder().timeout(timeout).build()?;
 
     let api_key = load_api_key(env_file)?;
     let payload = build_payload(&pdf_path).await?;
     fire(&progress, ProgressEvent::OcrStarted);
     let ocr_started = Instant::now();
-    let response = call_layout_parsing(&api_key, payload, timeout).await?;
+    let response = call_layout_parsing(&client, &api_key, payload).await?;
     let ocr_seconds = ocr_started.elapsed();
     fire(&progress, ProgressEvent::OcrFinished);
 
@@ -158,8 +159,8 @@ pub async fn process_pdf(
     let (markdown, downloaded_figures, remote_figure_links, image_blocks) = localize_figures(
         markdown,
         &layout_details,
+        &client,
         &prepared.figures_dir,
-        timeout,
         max_download_bytes,
         progress.clone(),
     )
@@ -233,8 +234,11 @@ async fn build_payload(pdf_path: &Path) -> Result<Value> {
     }))
 }
 
-async fn call_layout_parsing(api_key: &str, payload: Value, timeout: Duration) -> Result<Value> {
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
+async fn call_layout_parsing(
+    client: &reqwest::Client,
+    api_key: &str,
+    payload: Value,
+) -> Result<Value> {
     let response = client
         .post(API_URL)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -298,13 +302,13 @@ fn prepare_output_paths(
     if !overwrite {
         if markdown_path.exists() {
             return Err(anyhow!(
-                "Output already exists: {}. Re-run with \x1b[1;33m--overwrite\x1b[0m",
+                "Output already exists: {}. Re-run with --overwrite",
                 markdown_path.display()
             ));
         }
         if figures_dir.exists() {
             return Err(anyhow!(
-                "Output already exists: {}. Re-run with \x1b[1;33m--overwrite\x1b[0m",
+                "Output already exists: {}. Re-run with --overwrite",
                 figures_dir.display()
             ));
         }
@@ -334,8 +338,8 @@ fn prepare_output_paths(
 async fn localize_figures(
     markdown: String,
     layout_details: &[Value],
+    client: &reqwest::Client,
     figures_dir: &Path,
-    timeout: Duration,
     max_download_bytes: u64,
     progress: Option<ProgressCallback>,
 ) -> Result<(String, usize, usize, usize)> {
@@ -377,10 +381,11 @@ async fn localize_figures(
         let url = url.clone();
         let base = base.clone();
         let figures_dir = figures_dir.to_path_buf();
+        let client = client.clone();
         let progress = progress.clone();
         async move {
             let downloaded =
-                download_figure(&url, &figures_dir, &base, timeout, max_download_bytes).await;
+                download_figure(&client, &url, &figures_dir, &base, max_download_bytes).await;
             if downloaded.is_some() {
                 fire(&progress, ProgressEvent::FigureDownloadFinished);
             }
@@ -454,10 +459,10 @@ fn is_http_url(value: &str) -> bool {
 }
 
 async fn download_figure(
+    client: &reqwest::Client,
     remote_url: &str,
     figures_dir: &Path,
     base_name: &str,
-    timeout: Duration,
     max_download_bytes: u64,
 ) -> Option<String> {
     let parsed = url::Url::parse(remote_url).ok()?;
@@ -466,7 +471,6 @@ async fn download_figure(
         return None;
     }
 
-    let client = reqwest::Client::builder().timeout(timeout).build().ok()?;
     let response = client
         .get(remote_url)
         .header(USER_AGENT, "paperdown/0.1.0")
@@ -620,7 +624,13 @@ async fn atomic_write_bytes(path: &Path, content: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn collect_single_pdf() {
@@ -769,5 +779,63 @@ mod tests {
     fn non_http_urls_rejected() {
         assert!(url::Url::parse("file:///tmp/a.png").is_ok());
         assert!(!is_http_url("file:///tmp/a.png"));
+    }
+
+    #[test]
+    fn load_api_key_prefers_environment_variable() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=file-key\n").unwrap();
+
+        std::env::set_var("ZAI_API_KEY", "env-key");
+        let key = load_api_key(&env_file).unwrap();
+        std::env::remove_var("ZAI_API_KEY");
+
+        assert_eq!(key, "env-key");
+    }
+
+    #[test]
+    fn load_api_key_parses_quoted_value() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("ZAI_API_KEY");
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=\"quoted-key\"\n").unwrap();
+
+        let key = load_api_key(&env_file).unwrap();
+        assert_eq!(key, "quoted-key");
+    }
+
+    #[tokio::test]
+    async fn process_pdf_checks_output_conflict_before_env_lookup() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("ZAI_API_KEY");
+
+        let tmp = TempDir::new().unwrap();
+        let pdf = tmp.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF").unwrap();
+
+        let output_root = tmp.path().join("out");
+        let output_dir = output_root.join("paper");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        std::fs::write(output_dir.join("index.md"), b"existing").unwrap();
+
+        let missing_env = tmp.path().join("missing.env");
+        let err = process_pdf(
+            &pdf,
+            &output_root,
+            &missing_env,
+            Duration::from_secs(1),
+            1024,
+            false,
+            None,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("Re-run with --overwrite"));
+        assert!(!err.contains("ZAI_API_KEY"));
     }
 }
