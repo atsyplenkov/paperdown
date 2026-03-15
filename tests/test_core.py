@@ -257,13 +257,71 @@ class CliTests(unittest.TestCase):
             fake_result.log_path = Path("/out/a/log.jsonl")
 
             with (
-                mock.patch("paper_to_md.cli.ProcessPoolExecutor", ThreadPoolExecutor),
+                mock.patch("paper_to_md.cli.ThreadPoolExecutor", ThreadPoolExecutor),
                 mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result) as m,
             ):
                 exit_code = main(["--input", str(pdf_dir), "--output", str(pdf_dir / "out")])
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(m.call_count, 2)
+
+    def test_cli_verbose_logs_single_pdf_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf = Path(tmpdir) / "paper.pdf"
+            pdf.write_bytes(b"%PDF")
+
+            fake_result = mock.MagicMock()
+            fake_result.output_dir = Path("/out/paper")
+            fake_result.markdown_path = Path("/out/paper/index.md")
+            fake_result.downloaded_figures = 0
+            fake_result.remote_figure_links = 0
+            fake_result.image_blocks = 0
+            fake_result.usage = None
+            fake_result.log_path = Path("/out/paper/log.jsonl")
+
+            stderr = StringIO()
+            with (
+                mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result),
+                redirect_stderr(stderr),
+            ):
+                exit_code = main(["--input", str(pdf), "--verbose"])
+
+            self.assertEqual(exit_code, 0)
+            logged = stderr.getvalue()
+            self.assertIn("Processing 1 PDF: paper.pdf", logged)
+            self.assertIn("  done: paper.pdf", logged)
+
+    def test_cli_verbose_logs_batch_paths_and_queued_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_dir = Path(tmpdir)
+            (pdf_dir / "a.pdf").write_bytes(b"%PDF")
+            (pdf_dir / "b.pdf").write_bytes(b"%PDF")
+
+            fake_result = mock.MagicMock()
+            fake_result.output_dir = Path("/out/a")
+            fake_result.markdown_path = Path("/out/a/index.md")
+            fake_result.downloaded_figures = 0
+            fake_result.remote_figure_links = 0
+            fake_result.image_blocks = 0
+            fake_result.usage = None
+            fake_result.log_path = Path("/out/a/log.jsonl")
+
+            stderr = StringIO()
+            with (
+                mock.patch("paper_to_md.cli.ThreadPoolExecutor", ThreadPoolExecutor),
+                mock.patch("paper_to_md.cli.process_pdf", return_value=fake_result),
+                redirect_stderr(stderr),
+            ):
+                exit_code = main(
+                    ["--input", str(pdf_dir), "--output", str(pdf_dir / "out"), "-v"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            logged = stderr.getvalue()
+            self.assertIn("Input path:", logged)
+            self.assertIn("Output path:", logged)
+            self.assertIn("  queued: a.pdf", logged)
+            self.assertIn("  queued: b.pdf", logged)
 
     def test_cli_reports_error_for_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -320,4 +378,3 @@ class RunLogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -4,13 +4,13 @@ import argparse
 import json
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .core import OCRClientError, process_pdf
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
-DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 8)
+DEFAULT_MAX_WORKERS = min(32, max(4, (os.cpu_count() or 1) * 4))
 
 
 def positive_int(value: str) -> int:
@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=positive_int,
         default=DEFAULT_MAX_WORKERS,
         help="Maximum parallel workers for batch processing.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print progress details, including paths and queued files.",
     )
     return parser
 
@@ -118,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if len(pdfs) == 1:
+        if args.verbose:
+            print(f"Processing 1 PDF: {pdfs[0].name}", file=sys.stderr)
         try:
             summary = process_single(
                 pdfs[0], args.output, args.env_file, args.timeout, args.max_download_bytes
@@ -125,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
         except OCRClientError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        if args.verbose:
+            print(f"  done: {pdfs[0].name}", file=sys.stderr)
         print(json.dumps(summary, indent=2))
         return 0
 
@@ -132,8 +142,13 @@ def main(argv: list[str] | None = None) -> int:
     errors: list[dict] = []
     workers = min(args.workers, len(pdfs))
     print(f"Processing {len(pdfs)} PDFs with {workers} workers...", file=sys.stderr)
+    if args.verbose:
+        print(f"Input path: {args.input.resolve()}", file=sys.stderr)
+        print(f"Output path: {args.output.resolve()}", file=sys.stderr)
+        for pdf in pdfs:
+            print(f"  queued: {pdf.name}", file=sys.stderr)
 
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
                 process_single,

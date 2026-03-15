@@ -10,6 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib import error, parse, request
 
@@ -72,6 +73,7 @@ def process_pdf(
     timeout: int,
     max_download_bytes: int,
 ) -> ProcessResult:
+    run_started = perf_counter()
     pdf_path = pdf_path.resolve()
     if not pdf_path.is_file():
         raise OCRClientError(f"PDF not found: {pdf_path}")
@@ -80,13 +82,16 @@ def process_pdf(
 
     api_key = load_api_key(env_file)
     payload = build_payload(pdf_path)
+    ocr_started = perf_counter()
     response = call_layout_parsing(api_key, payload, timeout=timeout)
+    ocr_seconds = perf_counter() - ocr_started
     markdown, layout_details = validate_layout_response(response)
 
     output_dir = prepare_output_dir(output_root.resolve(), pdf_path.stem)
     figures_dir = output_dir / "figures"
     figures_dir.mkdir(exist_ok=True)
 
+    figure_processing_started = perf_counter()
     markdown, downloaded_figures, remote_figure_links, image_blocks = localize_figures(
         markdown=markdown,
         layout_details=layout_details,
@@ -94,11 +99,15 @@ def process_pdf(
         timeout=timeout,
         max_download_bytes=max_download_bytes,
     )
+    figure_processing_seconds = perf_counter() - figure_processing_started
 
     markdown_path = output_dir / "index.md"
+    write_started = perf_counter()
     atomic_write_text(markdown_path, markdown)
     usage = extract_usage(response)
     log_path = output_dir / "log.jsonl"
+    write_seconds = perf_counter() - write_started
+    total_seconds = perf_counter() - run_started
     append_log(
         log_path=log_path,
         entry={
@@ -110,6 +119,12 @@ def process_pdf(
             "remote_figure_links": remote_figure_links,
             "image_blocks": image_blocks,
             "usage": usage,
+            "timing": {
+                "ocr_call_s": round(ocr_seconds, 3),
+                "figure_processing_s": round(figure_processing_seconds, 3),
+                "write_and_log_s": round(write_seconds, 3),
+                "total_s": round(total_seconds, 3),
+            },
         },
     )
 
