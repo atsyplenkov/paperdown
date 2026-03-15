@@ -7,7 +7,6 @@
 - Async OCR requests and batch PDF processing
 - Concurrent figure downloads per PDF
 - Safe overwrite behavior with explicit `--overwrite`
-- Pretty JSON output on `stdout` for scripting
 - Progress display on `stderr` (TTY only)
 
 ## Usage

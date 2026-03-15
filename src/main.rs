@@ -3,7 +3,7 @@ mod core;
 
 use anyhow::Result;
 use clap::Parser;
-use core::{collect_pdfs, ProgressCallback, ProgressEvent};
+use core::{collect_pdfs, PdfSummary, ProgressCallback, ProgressEvent};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::io::IsTerminal;
@@ -39,7 +39,7 @@ async fn run() -> Result<i32> {
         if args.verbose {
             eprintln!("Processing 1 PDF: {}", pdfs[0].display());
         }
-        core::process_pdf(
+        let summary = core::process_pdf(
             &pdfs[0],
             &args.output,
             &args.env_file,
@@ -49,6 +49,7 @@ async fn run() -> Result<i32> {
             progress_callback(&pdfs[0], progress.clone()),
         )
         .await?;
+        print_single_summary_stdout(&summary);
         return Ok(0);
     }
 
@@ -84,9 +85,13 @@ async fn run() -> Result<i32> {
     .await;
 
     let mut failed_count = 0usize;
+    let mut success_count = 0usize;
+    let mut downloaded_figures = 0usize;
     for (pdf, result) in results {
         match result {
-            Ok(_) => {
+            Ok(summary) => {
+                success_count += 1;
+                downloaded_figures += summary.downloaded_figures;
                 if args.verbose {
                     eprintln!("  done: {}", pdf.display());
                 }
@@ -98,11 +103,55 @@ async fn run() -> Result<i32> {
         }
     }
 
+    print_batch_summary_stdout(success_count, failed_count, downloaded_figures);
     Ok(if failed_count > 0 { 1 } else { 0 })
 }
 
 fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
+}
+
+fn stdout_is_tty() -> bool {
+    std::io::stdout().is_terminal()
+}
+
+fn print_single_summary_stdout(summary: &PdfSummary) {
+    if stdout_is_tty() {
+        println!(
+            "\x1b[1;32mDone\x1b[0m {}",
+            display_path(Path::new(&summary.pdf))
+        );
+        println!(
+            "\x1b[36m->\x1b[0m markdown: {}",
+            display_path(Path::new(&summary.markdown_path))
+        );
+        println!(
+            "\x1b[36m->\x1b[0m downloaded figures: \x1b[1m{}\x1b[0m",
+            summary.downloaded_figures
+        );
+    } else {
+        println!(
+            "Done {} | markdown: {} | downloaded figures: {}",
+            display_path(Path::new(&summary.pdf)),
+            display_path(Path::new(&summary.markdown_path)),
+            summary.downloaded_figures
+        );
+    }
+}
+
+fn print_batch_summary_stdout(processed: usize, failed: usize, figures: usize) {
+    if stdout_is_tty() {
+        let color = if failed == 0 {
+            "\x1b[1;32m"
+        } else {
+            "\x1b[1;33m"
+        };
+        println!(
+            "{color}Batch Complete\x1b[0m processed: \x1b[1m{processed}\x1b[0m failed: \x1b[1m{failed}\x1b[0m figures: \x1b[1m{figures}\x1b[0m"
+        );
+    } else {
+        println!("Batch Complete processed: {processed} failed: {failed} figures: {figures}");
+    }
 }
 
 fn progress_callback(pdf: &Path, multi: Option<Arc<MultiProgress>>) -> Option<ProgressCallback> {

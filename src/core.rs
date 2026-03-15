@@ -142,6 +142,7 @@ pub async fn process_pdf(
     if !pdf_path.is_file() || !is_pdf_path(&pdf_path) {
         return Err(anyhow!("Input must be a PDF: {}", pdf_path.display()));
     }
+    let prepared = prepare_output_paths(output_root, &pdf_path, overwrite)?;
 
     let api_key = load_api_key(env_file)?;
     let payload = build_payload(&pdf_path).await?;
@@ -152,8 +153,6 @@ pub async fn process_pdf(
     fire(&progress, ProgressEvent::OcrFinished);
 
     let (markdown, layout_details, usage) = validate_layout_response(response)?;
-
-    let prepared = prepare_output_paths(output_root, &pdf_path, overwrite)?;
 
     let figure_started = Instant::now();
     let (markdown, downloaded_figures, remote_figure_links, image_blocks) = localize_figures(
