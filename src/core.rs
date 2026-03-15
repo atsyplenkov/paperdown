@@ -807,8 +807,8 @@ mod tests {
         assert_eq!(key, "quoted-key");
     }
 
-    #[tokio::test]
-    async fn process_pdf_checks_output_conflict_before_env_lookup() {
+    #[test]
+    fn process_pdf_checks_output_conflict_before_env_lookup() {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var("ZAI_API_KEY");
 
@@ -822,18 +822,19 @@ mod tests {
         std::fs::write(output_dir.join("index.md"), b"existing").unwrap();
 
         let missing_env = tmp.path().join("missing.env");
-        let err = process_pdf(
-            &pdf,
-            &output_root,
-            &missing_env,
-            Duration::from_secs(1),
-            1024,
-            false,
-            None,
-        )
-        .await
-        .unwrap_err()
-        .to_string();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(process_pdf(
+                &pdf,
+                &output_root,
+                &missing_env,
+                Duration::from_secs(1),
+                1024,
+                false,
+                None,
+            ))
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("Re-run with --overwrite"));
         assert!(!err.contains("ZAI_API_KEY"));
