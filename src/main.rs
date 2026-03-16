@@ -240,6 +240,7 @@ fn display_path(path: &Path) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     #[test]
     fn display_path_uses_relative_path_when_possible() {
@@ -255,5 +256,50 @@ mod tests {
     fn display_path_falls_back_to_file_name() {
         let path = PathBuf::from("/tmp/example.pdf");
         assert_eq!(display_path(&path), "example.pdf");
+    }
+
+    #[test]
+    fn format_error_for_stderr_rewrites_overwrite_token_when_tty() {
+        let message = "Re-run with --overwrite";
+        let rendered = format_error_for_stderr(message);
+        if stderr_is_tty() {
+            assert!(rendered.contains("\x1b[1;33m--overwrite\x1b[0m"));
+        } else {
+            assert_eq!(rendered, message);
+        }
+    }
+
+    #[test]
+    fn print_helpers_execute_without_panic() {
+        let summary = PdfSummary {
+            pdf: "/tmp/paper.pdf".to_string(),
+            output_dir: "/tmp/out/paper".to_string(),
+            markdown_path: "/tmp/out/paper/index.md".to_string(),
+            downloaded_figures: 2,
+            remote_figure_links: 3,
+            image_blocks: 3,
+            usage: None,
+            log_path: "/tmp/out/paper/log.jsonl".to_string(),
+        };
+        print_single_summary_stdout(&summary);
+        print_batch_summary_stdout(2, 1, 4);
+    }
+
+    #[test]
+    fn progress_callback_returns_none_without_multi_progress() {
+        assert!(progress_callback(Path::new("paper.pdf"), None).is_none());
+    }
+
+    #[test]
+    fn progress_callback_handles_all_events() {
+        let multi = Arc::new(MultiProgress::with_draw_target(ProgressDrawTarget::hidden()));
+        let callback = progress_callback(Path::new("paper.pdf"), Some(multi)).unwrap();
+        callback(ProgressEvent::OcrStarted);
+        callback(ProgressEvent::OcrFinished);
+        callback(ProgressEvent::MarkdownWriteStarted { bytes: 16 });
+        callback(ProgressEvent::MarkdownWriteFinished);
+        callback(ProgressEvent::FigureScanStarted { total: 2 });
+        callback(ProgressEvent::FigureDownloadFinished);
+        callback(ProgressEvent::FigureDownloadFinished);
     }
 }
