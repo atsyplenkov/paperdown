@@ -623,12 +623,334 @@ async fn atomic_write_bytes(path: &Path, content: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "net-tests")]
+    use httpmock::prelude::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn collect_pdfs_rejects_non_pdf_file() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("notes.txt");
+        std::fs::write(&file, b"plain-text").unwrap();
+        let err = collect_pdfs(&file).unwrap_err().to_string();
+        assert!(err.contains("Input must be a PDF"));
+    }
+
+    #[test]
+    fn collect_pdfs_rejects_empty_directory() {
+        let tmp = TempDir::new().unwrap();
+        let err = collect_pdfs(tmp.path()).unwrap_err().to_string();
+        assert!(err.contains("No PDF files found"));
+    }
+
+    #[test]
+    fn collect_pdfs_rejects_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("missing.pdf");
+        let err = collect_pdfs(&missing).unwrap_err().to_string();
+        assert!(err.contains("Input path does not exist"));
+    }
+
+    #[test]
+    fn load_api_key_blank_env_falls_back_to_file() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=file-key\n").unwrap();
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "   ");
+        }
+        let key = load_api_key(&env_file).unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        assert_eq!(key, "file-key");
+    }
+
+    #[test]
+    fn load_api_key_missing_file_is_error() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        let tmp = TempDir::new().unwrap();
+        let err = load_api_key(&tmp.path().join("missing.env"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("env file was not found"));
+    }
+
+    #[test]
+    fn load_api_key_missing_key_in_file_is_error() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "OTHER_KEY=x\n# ZAI_API_KEY=hidden\n").unwrap();
+        let err = load_api_key(&env_file).unwrap_err().to_string();
+        assert!(err.contains("ZAI_API_KEY was not found"));
+    }
+
+    #[test]
+    fn validate_layout_response_success_with_usage() {
+        let (md, details, usage) = validate_layout_response(json!({
+            "md_results": "# Title",
+            "layout_details": [{"label": "image"}],
+            "usage": {"tokens": 10}
+        }))
+        .unwrap();
+        assert_eq!(md, "# Title");
+        assert_eq!(details.len(), 1);
+        assert_eq!(usage.unwrap()["tokens"], 10);
+    }
+
+    #[test]
+    fn validate_layout_response_ignores_non_object_usage() {
+        let (_, _, usage) = validate_layout_response(json!({
+            "md_results": "# Title",
+            "layout_details": [],
+            "usage": 123
+        }))
+        .unwrap();
+        assert!(usage.is_none());
+    }
+
+    #[test]
+    fn build_payload_contains_pdf_data_uri() {
+        let tmp = TempDir::new().unwrap();
+        let pdf = tmp.path().join("paper.pdf");
+        let bytes = b"%PDF-1.7\n";
+        std::fs::write(&pdf, bytes).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let payload = rt.block_on(build_payload(&pdf)).unwrap();
+
+        assert_eq!(payload["model"], "glm-ocr");
+        let encoded = payload["file"].as_str().unwrap();
+        assert!(encoded.starts_with("data:application/pdf;base64,"));
+        let raw = encoded.trim_start_matches("data:application/pdf;base64,");
+        let decoded = {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(raw)
+                .unwrap()
+        };
+        assert_eq!(decoded, bytes);
+    }
+
+    #[test]
+    fn content_type_to_suffix_maps_known_values() {
+        assert_eq!(
+            content_type_to_suffix(Some("image/jpeg; charset=utf-8")),
+            Some(".jpg".to_string())
+        );
+        assert_eq!(
+            content_type_to_suffix(Some("IMAGE/PNG")),
+            Some(".png".to_string())
+        );
+        assert_eq!(content_type_to_suffix(Some("text/plain")), None);
+        assert_eq!(content_type_to_suffix(None), None);
+    }
+
+    #[test]
+    fn url_suffix_handles_extensions() {
+        assert_eq!(
+            url_suffix("https://x/y/fig.png?v=1"),
+            Some(".png".to_string())
+        );
+        assert_eq!(url_suffix("https://x/y/noext"), None);
+        assert_eq!(url_suffix("not-a-url"), None);
+    }
+
+    #[test]
+    fn append_log_appends_json_lines() {
+        let tmp = TempDir::new().unwrap();
+        let log = tmp.path().join("nested").join("log.jsonl");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(append_log(&log, json!({"a": 1}))).unwrap();
+        rt.block_on(append_log(&log, json!({"b": 2}))).unwrap();
+
+        let content = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(serde_json::from_str::<Value>(lines[0]).unwrap()["a"], 1);
+        assert_eq!(serde_json::from_str::<Value>(lines[1]).unwrap()["b"], 2);
+    }
+
+    #[test]
+    fn atomic_write_text_creates_parent_and_overwrites() {
+        let tmp = TempDir::new().unwrap();
+        let out = tmp.path().join("deep").join("file.txt");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(atomic_write_text(&out, "first")).unwrap();
+        rt.block_on(atomic_write_text(&out, "second")).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "second");
+    }
+
+    #[test]
+    fn fire_invokes_callback_when_present() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        let cb: ProgressCallback = Arc::new(move |_| {
+            calls2.fetch_add(1, Ordering::SeqCst);
+        });
+        fire(&Some(cb), ProgressEvent::OcrStarted);
+        fire(&None, ProgressEvent::OcrFinished);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn round3_rounds_millis() {
+        assert_eq!(round3(Duration::from_millis(1234)), 1.234);
+    }
+
+    #[cfg(feature = "net-tests")]
+    #[test]
+    fn download_figure_accepts_image_from_mock_server() {
+        let server = MockServer::start();
+        let image = vec![137, 80, 78, 71];
+        let img_mock = server.mock(|when, then| {
+            when.method(GET).path("/img");
+            then.status(200)
+                .header("content-type", "image/png")
+                .body(image.clone());
+        });
+
+        let tmp = TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let name = rt.block_on(download_figure(
+            &client,
+            &server.url("/img"),
+            tmp.path(),
+            "fig-001-001",
+            1024,
+        ));
+
+        img_mock.assert_hits(1);
+        let name = name.unwrap();
+        assert_eq!(name, "fig-001-001.png");
+        assert!(tmp.path().join(name).exists());
+    }
+
+    #[cfg(feature = "net-tests")]
+    #[test]
+    fn download_figure_rejects_non_image_content_type() {
+        let server = MockServer::start();
+        let text_mock = server.mock(|when, then| {
+            when.method(GET).path("/txt");
+            then.status(200)
+                .header("content-type", "text/plain")
+                .body("nope");
+        });
+
+        let tmp = TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let result = rt.block_on(download_figure(
+            &client,
+            &server.url("/txt"),
+            tmp.path(),
+            "fig-001-001",
+            1024,
+        ));
+
+        text_mock.assert_hits(1);
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "net-tests")]
+    #[test]
+    fn localize_figures_rewrites_markdown_and_tracks_progress() {
+        let server = MockServer::start();
+        let png_mock = server.mock(|when, then| {
+            when.method(GET).path("/a");
+            then.status(200)
+                .header("content-type", "image/png")
+                .body(vec![137, 80, 78, 71]);
+        });
+        let jpg_mock = server.mock(|when, then| {
+            when.method(GET).path("/b");
+            then.status(200)
+                .header("content-type", "image/jpeg")
+                .body(vec![255, 216, 255]);
+        });
+
+        let markdown = format!(
+            "A ![]({}) B <img src='{}'/> A2 ![]({})",
+            server.url("/a"),
+            server.url("/b"),
+            server.url("/a")
+        );
+        let layout_details = vec![
+            json!([
+                {"label": "image", "image_url": server.url("/a")},
+                {"label": "text", "content": "ignore"},
+                {"label": "image", "image_url": server.url("/a")}
+            ]),
+            json!([{"label": "image", "content": {"url": server.url("/b")}}]),
+        ];
+
+        let progress_events = Arc::new(Mutex::new(Vec::<ProgressEvent>::new()));
+        let progress_ref = progress_events.clone();
+        let progress: ProgressCallback = Arc::new(move |event| {
+            progress_ref.lock().unwrap().push(event);
+        });
+
+        let tmp = TempDir::new().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (rewritten, downloaded, remote_links, image_blocks) = rt
+            .block_on(localize_figures(
+                markdown,
+                &layout_details,
+                &client,
+                tmp.path(),
+                2048,
+                Some(progress),
+            ))
+            .unwrap();
+
+        png_mock.assert_hits(1);
+        jpg_mock.assert_hits(1);
+        assert_eq!(downloaded, 2);
+        assert_eq!(remote_links, 3);
+        assert_eq!(image_blocks, 3);
+        assert!(rewritten.contains("figures/fig-001-001.png"));
+        assert!(rewritten.contains("figures/fig-002-001.jpg"));
+        assert!(tmp.path().join("fig-001-001.png").exists());
+        assert!(tmp.path().join("fig-002-001.jpg").exists());
+
+        let events = progress_events.lock().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::FigureScanStarted { total: 2 }))
+        );
+        let downloaded_events = events
+            .iter()
+            .filter(|e| matches!(e, ProgressEvent::FigureDownloadFinished))
+            .count();
+        assert_eq!(downloaded_events, 2);
     }
 
     #[test]
