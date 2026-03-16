@@ -1,15 +1,15 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -89,10 +89,10 @@ fn is_pdf_path(path: &Path) -> bool {
 }
 
 pub fn load_api_key(env_file: &Path) -> Result<String> {
-    if let Ok(api_key) = std::env::var("ZAI_API_KEY") {
-        if !api_key.trim().is_empty() {
-            return Ok(api_key);
-        }
+    if let Ok(api_key) = std::env::var("ZAI_API_KEY")
+        && !api_key.trim().is_empty()
+    {
+        return Ok(api_key);
     }
 
     let content = std::fs::read_to_string(env_file).with_context(|| {
@@ -223,8 +223,8 @@ fn round3(duration: Duration) -> f64 {
 async fn build_payload(pdf_path: &Path) -> Result<Value> {
     let bytes = fs::read(pdf_path).await?;
     let encoded = {
-        use base64::engine::general_purpose::STANDARD;
         use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
         STANDARD.encode(bytes)
     };
     Ok(json!({
@@ -418,10 +418,10 @@ async fn localize_figures(
 
 fn extract_image_url(block: &Value) -> Option<String> {
     for key in ["content", "image_url", "crop_image_url", "url", "file_url"] {
-        if let Some(value) = block.get(key) {
-            if let Some(found) = find_http_url(value) {
-                return Some(found);
-            }
+        if let Some(value) = block.get(key)
+            && let Some(found) = find_http_url(value)
+        {
+            return Some(found);
         }
     }
     None
@@ -487,10 +487,9 @@ async fn download_figure(
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
+        && length > max_download_bytes
     {
-        if length > max_download_bytes {
-            return None;
-        }
+        return None;
     }
 
     let content_type = response
@@ -499,10 +498,10 @@ async fn download_figure(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
 
-    if let Some(ref ctype) = content_type {
-        if !ctype.to_lowercase().starts_with("image/") {
-            return None;
-        }
+    if let Some(ref ctype) = content_type
+        && !ctype.to_lowercase().starts_with("image/")
+    {
+        return None;
     }
 
     let mut stream = response.bytes_stream();

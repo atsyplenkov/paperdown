@@ -1,7 +1,8 @@
 [package]
 name = "paperdown"
 version = "0.1.0"
-edition = "2021"
+authors = ["Anatoly Tsyplenkov <atsyplenkov@fastmail.com>"]
+edition = "2024"
 description = "Convert paper PDFs into markdown with local figures using Z.AI OCR."
 license = "MIT"
 readme = "README.md"

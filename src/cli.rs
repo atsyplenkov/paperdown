@@ -129,14 +129,16 @@ mod tests {
     #[test]
     fn rejects_zero_positive_fields() {
         assert!(Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--timeout", "0"]).is_err());
-        assert!(Cli::try_parse_from([
-            "paperdown",
-            "--input",
-            "in.pdf",
-            "--max-download-bytes",
-            "0"
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "paperdown",
+                "--input",
+                "in.pdf",
+                "--max-download-bytes",
+                "0"
+            ])
+            .is_err()
+        );
         assert!(Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--workers", "0"]).is_err());
     }
 

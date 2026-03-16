@@ -5,7 +5,7 @@ mod core;
 
 use anyhow::Result;
 use clap::Parser;
-use core::{collect_pdfs, PdfSummary, ProgressCallback, ProgressEvent};
+use core::{PdfSummary, ProgressCallback, ProgressEvent, collect_pdfs};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::io::IsTerminal;
@@ -226,10 +226,10 @@ fn progress_callback(pdf: &Path, multi: Option<Arc<MultiProgress>>) -> Option<Pr
 }
 
 fn display_path(path: &Path) -> String {
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Ok(rel) = path.strip_prefix(cwd) {
-            return rel.display().to_string();
-        }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(rel) = path.strip_prefix(cwd)
+    {
+        return rel.display().to_string();
     }
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
