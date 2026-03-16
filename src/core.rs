@@ -787,9 +787,13 @@ mod tests {
         let env_file = tmp.path().join(".env");
         std::fs::write(&env_file, "ZAI_API_KEY=file-key\n").unwrap();
 
-        std::env::set_var("ZAI_API_KEY", "env-key");
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "env-key");
+        }
         let key = load_api_key(&env_file).unwrap();
-        std::env::remove_var("ZAI_API_KEY");
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
 
         assert_eq!(key, "env-key");
     }
@@ -797,7 +801,9 @@ mod tests {
     #[test]
     fn load_api_key_parses_quoted_value() {
         let _guard = env_lock().lock().unwrap();
-        std::env::remove_var("ZAI_API_KEY");
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
         let tmp = TempDir::new().unwrap();
         let env_file = tmp.path().join(".env");
         std::fs::write(&env_file, "ZAI_API_KEY=\"quoted-key\"\n").unwrap();
@@ -809,7 +815,9 @@ mod tests {
     #[test]
     fn process_pdf_checks_output_conflict_before_env_lookup() {
         let _guard = env_lock().lock().unwrap();
-        std::env::remove_var("ZAI_API_KEY");
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
 
         let tmp = TempDir::new().unwrap();
         let pdf = tmp.path().join("paper.pdf");
