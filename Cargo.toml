@@ -16,6 +16,10 @@ categories = ["command-line-utilities", "text-processing"]
 name = "paperdown"
 path = "src/main.rs"
 
+[features]
+default = []
+net-tests = []
+
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
@@ -33,3 +37,4 @@ url = "2"
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"
+httpmock = "0.7"
