@@ -12,8 +12,8 @@ For each PDF, it creates:\n\
 - <output>/<pdf_stem>/figures/\n\
 - <output>/<pdf_stem>/log.jsonl\n\n\
 API key lookup order:\n\
-1) ZAI_API_KEY from environment\n\
-2) ZAI_API_KEY from --env-file",
+1) ZAI_API_KEY from --env-file\n\
+2) ZAI_API_KEY from environment",
     after_help = "Examples:\n  \
 paperdown --input pdf/paper.pdf\n  \
 paperdown --input pdf/ --output md/ --workers 4\n  \
@@ -41,7 +41,7 @@ pub struct Cli {
     #[arg(
         long = "env-file",
         default_value = ".env",
-        help = "Path to .env file used only if ZAI_API_KEY is not already set."
+        help = "Path to .env file checked first for ZAI_API_KEY, before environment fallback."
     )]
     pub env_file: PathBuf,
 
@@ -148,7 +148,11 @@ mod tests {
         let help = cmd.render_long_help().to_string();
         assert!(help.contains("Examples:"));
         assert!(help.contains("--overwrite"));
-        assert!(help.contains("ZAI_API_KEY"));
+        let file_first = help.find("1) ZAI_API_KEY from --env-file");
+        let env_second = help.find("2) ZAI_API_KEY from environment");
+        assert!(file_first.is_some());
+        assert!(env_second.is_some());
+        assert!(file_first.unwrap() < env_second.unwrap());
         assert!(help.contains("single .pdf file or a directory"));
     }
 }

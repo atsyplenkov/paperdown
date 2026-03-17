@@ -89,41 +89,55 @@ fn is_pdf_path(path: &Path) -> bool {
 }
 
 pub fn load_api_key(env_file: &Path) -> Result<String> {
+    let env_file_exists = env_file.try_exists().with_context(|| {
+        format!(
+            "Failed to access env file metadata: {}",
+            env_file.display()
+        )
+    })?;
+
+    if env_file_exists {
+        let entries = dotenvy::from_path_iter(env_file).with_context(|| {
+            format!(
+                "Failed to read or parse env file: {}",
+                env_file.display()
+            )
+        })?;
+        let mut file_key = None;
+        for entry in entries {
+            let (key, value) = entry.with_context(|| {
+                format!(
+                    "Failed to read or parse env file: {}",
+                    env_file.display()
+                )
+            })?;
+            if key == "ZAI_API_KEY" {
+                if value.trim().is_empty() {
+                    file_key = None;
+                } else {
+                    file_key = Some(value);
+                }
+            }
+        }
+        if let Some(key) = file_key {
+            return Ok(key);
+        }
+    }
+
     if let Ok(api_key) = std::env::var("ZAI_API_KEY")
         && !api_key.trim().is_empty()
     {
         return Ok(api_key);
     }
 
-    let content = std::fs::read_to_string(env_file).with_context(|| {
-        format!(
+    if !env_file_exists {
+        return Err(anyhow!(
             "ZAI_API_KEY is not set and env file was not found: {}",
             env_file.display()
-        )
-    })?;
-
-    for line in content.lines() {
-        let stripped = line.trim();
-        if stripped.is_empty() || stripped.starts_with('#') || !stripped.contains('=') {
-            continue;
-        }
-        let mut split = stripped.splitn(2, '=');
-        let key = split.next().unwrap_or_default().trim();
-        let value = split
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'');
-        if key == "ZAI_API_KEY" && !value.is_empty() {
-            return Ok(value.to_string());
-        }
+        ));
     }
 
-    Err(anyhow!(
-        "ZAI_API_KEY was not found in {}",
-        env_file.display()
-    ))
+    Err(anyhow!("ZAI_API_KEY was not found in {}", env_file.display()))
 }
 
 pub async fn process_pdf(
@@ -702,6 +716,119 @@ mod tests {
     }
 
     #[test]
+    fn load_api_key_missing_file_falls_back_to_environment() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("missing.env");
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "env-fallback-key");
+        }
+        let key = load_api_key(&missing).unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        assert_eq!(key, "env-fallback-key");
+    }
+
+    #[test]
+    fn load_api_key_blank_file_value_falls_back_to_environment() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=   \n").unwrap();
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "env-fallback-key");
+        }
+        let key = load_api_key(&env_file).unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        assert_eq!(key, "env-fallback-key");
+    }
+
+    #[test]
+    fn load_api_key_duplicate_entries_last_wins() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=first\nZAI_API_KEY=second\n").unwrap();
+        let key = load_api_key(&env_file).unwrap();
+        assert_eq!(key, "second");
+    }
+
+    #[test]
+    fn load_api_key_export_statement_is_parsed() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "export ZAI_API_KEY=from-export\n").unwrap();
+        let key = load_api_key(&env_file).unwrap();
+        assert_eq!(key, "from-export");
+    }
+
+    #[test]
+    fn load_api_key_interpolation_follows_dotenvy_behavior() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        unsafe {
+            std::env::set_var("BASE_KEY", "root");
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        std::fs::write(&env_file, "ZAI_API_KEY=${BASE_KEY}-suffix\n").unwrap();
+        let key = load_api_key(&env_file).unwrap();
+        unsafe {
+            std::env::remove_var("BASE_KEY");
+        }
+        assert_eq!(key, "root-suffix");
+    }
+
+    #[test]
+    fn load_api_key_invalid_file_is_hard_error() {
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "env-fallback-key");
+        }
+        std::fs::write(&env_file, "ZAI_API_KEY='unterminated\n").unwrap();
+        let err = load_api_key(&env_file).unwrap_err().to_string();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        assert!(err.contains("Failed to read or parse env file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_api_key_unreadable_file_does_not_fall_back_to_environment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_lock().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let locked_dir = tmp.path().join("locked");
+        std::fs::create_dir_all(&locked_dir).unwrap();
+        let env_file = locked_dir.join(".env");
+        std::fs::write(&env_file, "ZAI_API_KEY=file-key\n").unwrap();
+        unsafe {
+            std::env::set_var("ZAI_API_KEY", "env-fallback-key");
+        }
+        std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = load_api_key(&env_file).unwrap_err().to_string();
+        std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe {
+            std::env::remove_var("ZAI_API_KEY");
+        }
+        assert!(err.contains("Failed to access env file metadata"));
+    }
+
+    #[test]
     fn validate_layout_response_success_with_usage() {
         let (md, details, usage) = validate_layout_response(json!({
             "md_results": "# Title",
@@ -1103,7 +1230,7 @@ mod tests {
     }
 
     #[test]
-    fn load_api_key_prefers_environment_variable() {
+    fn load_api_key_prefers_env_file_over_environment_variable() {
         let _guard = env_lock().lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let env_file = tmp.path().join(".env");
@@ -1117,7 +1244,7 @@ mod tests {
             std::env::remove_var("ZAI_API_KEY");
         }
 
-        assert_eq!(key, "env-key");
+        assert_eq!(key, "file-key");
     }
 
     #[test]

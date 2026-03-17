@@ -67,15 +67,15 @@ For each PDF, it creates:
 - <output>/<pdf_stem>/log.jsonl
 
 API key lookup order:
-1) ZAI_API_KEY from environment
-2) ZAI_API_KEY from --env-file
+1) ZAI_API_KEY from --env-file
+2) ZAI_API_KEY from environment
 
 Usage: paperdown [OPTIONS] --input <PATH>
 
 Options:
       --input <PATH>                             Input path: a single .pdf file or a directory containing .pdf files.
       --output <OUTPUT>                          Output root directory for generated markdown folders. [default: md]
-      --env-file <ENV_FILE>                      Path to .env file used only if ZAI_API_KEY is not already set. [default: .env]
+      --env-file <ENV_FILE>                      Path to .env file checked first for ZAI_API_KEY, before environment fallback. [default: .env]
       --timeout <TIMEOUT>                        HTTP timeout in seconds for OCR requests and figure downloads. [default: 180]
       --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file. [default: 20971520]
       --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode. [default: 32]
@@ -87,7 +87,7 @@ Options:
 
 ## API key
 
-`paperdown` reads `ZAI_API_KEY` from environment first. If not found, it reads the value from `--env-file`.
+`paperdown` reads `ZAI_API_KEY` from `--env-file` first. If not found, it falls back to the environment.
 
 ### Get a key
 
