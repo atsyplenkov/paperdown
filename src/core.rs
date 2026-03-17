@@ -89,27 +89,17 @@ fn is_pdf_path(path: &Path) -> bool {
 }
 
 pub fn load_api_key(env_file: &Path) -> Result<String> {
-    let env_file_exists = env_file.try_exists().with_context(|| {
-        format!(
-            "Failed to access env file metadata: {}",
-            env_file.display()
-        )
-    })?;
+    let env_file_exists = env_file
+        .try_exists()
+        .with_context(|| format!("Failed to access env file metadata: {}", env_file.display()))?;
 
     if env_file_exists {
-        let entries = dotenvy::from_path_iter(env_file).with_context(|| {
-            format!(
-                "Failed to read or parse env file: {}",
-                env_file.display()
-            )
-        })?;
+        let entries = dotenvy::from_path_iter(env_file)
+            .with_context(|| format!("Failed to read or parse env file: {}", env_file.display()))?;
         let mut file_key = None;
         for entry in entries {
             let (key, value) = entry.with_context(|| {
-                format!(
-                    "Failed to read or parse env file: {}",
-                    env_file.display()
-                )
+                format!("Failed to read or parse env file: {}", env_file.display())
             })?;
             if key == "ZAI_API_KEY" {
                 if value.trim().is_empty() {
@@ -137,7 +127,10 @@ pub fn load_api_key(env_file: &Path) -> Result<String> {
         ));
     }
 
-    Err(anyhow!("ZAI_API_KEY was not found in {}", env_file.display()))
+    Err(anyhow!(
+        "ZAI_API_KEY was not found in {}",
+        env_file.display()
+    ))
 }
 
 pub async fn process_pdf(
