@@ -156,8 +156,6 @@ mod tests {
     #[cfg(feature = "net-tests")]
     use tokio::io::AsyncReadExt;
     #[cfg(feature = "net-tests")]
-    use tokio::io::AsyncWriteExt;
-    #[cfg(feature = "net-tests")]
     use tokio::net::TcpListener;
 
     fn env_lock() -> &'static Mutex<()> {
@@ -461,6 +459,8 @@ mod tests {
     async fn start_chunked_image_server(
         chunks: Vec<Vec<u8>>,
     ) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::AsyncWriteExt as _;
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
