@@ -1,13 +1,10 @@
-#![doc = include_str!("../README.md")]
-
 mod cli;
-mod core;
 
 use anyhow::Result;
 use clap::Parser;
-use core::{PdfSummary, ProgressCallback, ProgressEvent, collect_pdfs};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use paperdown::core::{self, PdfSummary, ProgressCallback, ProgressEvent, collect_pdfs};
 use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
