@@ -16,6 +16,10 @@ categories = ["command-line-utilities", "text-processing"]
 name = "paperdown"
 path = "src/main.rs"
 
+[profile.release]
+opt-level = "z"
+strip = "symbols"
+
 [features]
 default = []
 net-tests = []
