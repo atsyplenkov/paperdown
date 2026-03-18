@@ -1,21 +1,19 @@
 use anyhow::{Context, Result, anyhow};
-use futures::stream::{self, StreamExt};
-use regex::Regex;
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
-const API_URL: &str = "https://api.z.ai/api/paas/v4/layout_parsing";
-const INTERNAL_FIGURE_CONCURRENCY: usize = 16;
+mod assets;
+mod input;
+mod markdown;
+mod ocr;
+mod output;
+
+pub(crate) use input::collect_pdfs;
 
 #[derive(Clone, Debug)]
 pub enum ProgressEvent {
@@ -41,99 +39,6 @@ pub struct PdfSummary {
     pub log_path: String,
 }
 
-#[derive(Debug)]
-struct PreparedOutput {
-    output_dir: PathBuf,
-    figures_dir: PathBuf,
-    markdown_path: PathBuf,
-    log_path: PathBuf,
-}
-
-pub fn collect_pdfs(input_path: &Path) -> Result<Vec<PathBuf>> {
-    let input_path = input_path
-        .canonicalize()
-        .with_context(|| format!("Input path does not exist: {}", input_path.display()))?;
-
-    if input_path.is_file() {
-        if !is_pdf_path(&input_path) {
-            return Err(anyhow!("Input must be a PDF: {}", input_path.display()));
-        }
-        return Ok(vec![input_path]);
-    }
-
-    if input_path.is_dir() {
-        let mut pdfs = Vec::new();
-        for entry in std::fs::read_dir(&input_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && is_pdf_path(&path) {
-                pdfs.push(path);
-            }
-        }
-        pdfs.sort();
-        if pdfs.is_empty() {
-            return Err(anyhow!("No PDF files found in: {}", input_path.display()));
-        }
-        return Ok(pdfs);
-    }
-
-    Err(anyhow!(
-        "Input path does not exist: {}",
-        input_path.display()
-    ))
-}
-
-fn is_pdf_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
-}
-
-pub fn load_api_key(env_file: &Path) -> Result<String> {
-    let env_file_exists = env_file
-        .try_exists()
-        .with_context(|| format!("Failed to access env file metadata: {}", env_file.display()))?;
-
-    if env_file_exists {
-        let entries = dotenvy::from_path_iter(env_file)
-            .with_context(|| format!("Failed to read or parse env file: {}", env_file.display()))?;
-        let mut file_key = None;
-        for entry in entries {
-            let (key, value) = entry.with_context(|| {
-                format!("Failed to read or parse env file: {}", env_file.display())
-            })?;
-            if key == "ZAI_API_KEY" {
-                if value.trim().is_empty() {
-                    file_key = None;
-                } else {
-                    file_key = Some(value);
-                }
-            }
-        }
-        if let Some(key) = file_key {
-            return Ok(key);
-        }
-    }
-
-    if let Ok(api_key) = std::env::var("ZAI_API_KEY")
-        && !api_key.trim().is_empty()
-    {
-        return Ok(api_key);
-    }
-
-    if !env_file_exists {
-        return Err(anyhow!(
-            "ZAI_API_KEY is not set and env file was not found: {}",
-            env_file.display()
-        ));
-    }
-
-    Err(anyhow!(
-        "ZAI_API_KEY was not found in {}",
-        env_file.display()
-    ))
-}
-
 pub async fn process_pdf(
     pdf_path: &Path,
     output_root: &Path,
@@ -147,34 +52,35 @@ pub async fn process_pdf(
     let pdf_path = pdf_path
         .canonicalize()
         .with_context(|| format!("PDF not found: {}", pdf_path.display()))?;
-    if !pdf_path.is_file() || !is_pdf_path(&pdf_path) {
+    if !pdf_path.is_file() || !input::is_pdf_path(&pdf_path) {
         return Err(anyhow!("Input must be a PDF: {}", pdf_path.display()));
     }
-    let prepared = prepare_output_paths(output_root, &pdf_path, overwrite)?;
+    let prepared = output::prepare_output_paths(output_root, &pdf_path, overwrite)?;
     let client = reqwest::Client::builder().timeout(timeout).build()?;
 
-    let api_key = load_api_key(env_file)?;
-    let payload = build_payload(&pdf_path).await?;
+    let api_key = input::load_api_key(env_file)?;
+    let payload = ocr::build_payload(&pdf_path).await?;
     fire(&progress, ProgressEvent::OcrStarted);
     let ocr_started = Instant::now();
-    let response = call_layout_parsing(&client, &api_key, payload).await?;
+    let response = ocr::call_layout_parsing(&client, &api_key, payload).await?;
     let ocr_seconds = ocr_started.elapsed();
     fire(&progress, ProgressEvent::OcrFinished);
 
-    let (markdown, layout_details, usage) = validate_layout_response(response)?;
+    let (markdown, layout_details, usage) = ocr::validate_layout_response(response)?;
 
     let figure_started = Instant::now();
-    let (markdown, downloaded_figures, remote_figure_links, image_blocks) = localize_figures(
-        markdown,
-        &layout_details,
-        &client,
-        &prepared.figures_dir,
-        max_download_bytes,
-        progress.clone(),
-    )
-    .await?;
+    let (markdown, downloaded_figures, remote_figure_links, image_blocks) =
+        assets::localize_figures(
+            markdown,
+            &layout_details,
+            &client,
+            &prepared.figures_dir,
+            max_download_bytes,
+            progress.clone(),
+        )
+        .await?;
     let figure_seconds = figure_started.elapsed();
-    let markdown = strip_html_img_alt_attributes(&markdown);
+    let markdown = markdown::strip_html_img_alt_attributes(&markdown);
 
     fire(
         &progress,
@@ -183,10 +89,10 @@ pub async fn process_pdf(
         },
     );
     let write_started = Instant::now();
-    atomic_write_text(&prepared.markdown_path, &markdown).await?;
+    output::atomic_write_text(&prepared.markdown_path, &markdown).await?;
     fire(&progress, ProgressEvent::MarkdownWriteFinished);
 
-    append_log(
+    output::append_log(
         &prepared.log_path,
         json!({
             "timestamp_utc": OffsetDateTime::now_utc().format(&Rfc3339)?,
@@ -228,621 +134,24 @@ fn fire(progress: &Option<ProgressCallback>, event: ProgressEvent) {
 fn round3(duration: Duration) -> f64 {
     ((duration.as_secs_f64() * 1000.0).round()) / 1000.0
 }
-
-async fn build_payload(pdf_path: &Path) -> Result<Value> {
-    let bytes = fs::read(pdf_path).await?;
-    let encoded = {
-        use base64::Engine;
-        use base64::engine::general_purpose::STANDARD;
-        STANDARD.encode(bytes)
-    };
-    Ok(json!({
-        "model": "glm-ocr",
-        "file": format!("data:application/pdf;base64,{encoded}"),
-        "return_crop_images": true
-    }))
-}
-
-async fn call_layout_parsing(
-    client: &reqwest::Client,
-    api_key: &str,
-    payload: Value,
-) -> Result<Value> {
-    let response = client
-        .post(API_URL)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&payload)
-        .send()
-        .await
-        .context("Could not reach Z.AI OCR API")?;
-
-    let status = response.status();
-    let text = response.text().await?;
-    if !status.is_success() {
-        return Err(anyhow!(
-            "Z.AI OCR request failed with HTTP {}: {}",
-            status.as_u16(),
-            text
-        ));
-    }
-
-    let parsed: Value =
-        serde_json::from_str(&text).context("Z.AI OCR API returned invalid JSON")?;
-    if !parsed.is_object() {
-        return Err(anyhow!("Z.AI OCR API returned an unexpected response type"));
-    }
-    Ok(parsed)
-}
-
-fn validate_layout_response(data: Value) -> Result<(String, Vec<Value>, Option<Value>)> {
-    let markdown = data
-        .get("md_results")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Z.AI OCR response is missing string field 'md_results'"))?
-        .to_string();
-
-    let layout_details = data
-        .get("layout_details")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("Z.AI OCR response is missing list field 'layout_details'"))?
-        .clone();
-
-    let usage = data.get("usage").filter(|v| v.is_object()).cloned();
-    Ok((markdown, layout_details, usage))
-}
-
-fn prepare_output_paths(
-    output_root: &Path,
-    pdf_path: &Path,
-    overwrite: bool,
-) -> Result<PreparedOutput> {
-    let stem = pdf_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow!("Invalid PDF filename: {}", pdf_path.display()))?;
-
-    let output_dir = output_root.join(stem);
-    std::fs::create_dir_all(&output_dir)?;
-
-    let markdown_path = output_dir.join("index.md");
-    let figures_dir = output_dir.join("figures");
-    let log_path = output_dir.join("log.jsonl");
-
-    if !overwrite {
-        if markdown_path.exists() {
-            return Err(anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                markdown_path.display()
-            ));
-        }
-        if figures_dir.exists() {
-            return Err(anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                figures_dir.display()
-            ));
-        }
-    } else {
-        if markdown_path.exists() {
-            std::fs::remove_file(&markdown_path)?;
-        }
-        if figures_dir.exists() {
-            if figures_dir.is_dir() {
-                std::fs::remove_dir_all(&figures_dir)?;
-            } else {
-                std::fs::remove_file(&figures_dir)?;
-            }
-        }
-    }
-
-    std::fs::create_dir_all(&figures_dir)?;
-
-    Ok(PreparedOutput {
-        output_dir,
-        figures_dir,
-        markdown_path,
-        log_path,
-    })
-}
-
-async fn localize_figures(
-    markdown: String,
-    layout_details: &[Value],
-    client: &reqwest::Client,
-    figures_dir: &Path,
-    max_download_bytes: u64,
-    progress: Option<ProgressCallback>,
-) -> Result<(String, usize, usize, usize)> {
-    let mut remote_figure_links = 0usize;
-    let mut image_blocks = 0usize;
-    let mut first_url_order: Vec<(String, String)> = Vec::new();
-    let mut seen: HashMap<String, String> = HashMap::new();
-
-    for (page_index, page_blocks) in layout_details.iter().enumerate() {
-        let Some(blocks) = page_blocks.as_array() else {
-            continue;
-        };
-        for (block_index, block) in blocks.iter().enumerate() {
-            if block.get("label").and_then(Value::as_str) != Some("image") {
-                continue;
-            }
-            image_blocks += 1;
-            let Some(remote_url) = extract_image_url(block) else {
-                continue;
-            };
-            remote_figure_links += 1;
-            if !seen.contains_key(&remote_url) {
-                let base = format!("fig-{:03}-{:03}", page_index + 1, block_index + 1);
-                seen.insert(remote_url.clone(), base.clone());
-                first_url_order.push((remote_url, base));
-            }
-        }
-    }
-
-    fire(
-        &progress,
-        ProgressEvent::FigureScanStarted {
-            total: first_url_order.len(),
-        },
-    );
-
-    let figure_cap = INTERNAL_FIGURE_CONCURRENCY.max(1);
-    let tasks = first_url_order.iter().map(|(url, base)| {
-        let url = url.clone();
-        let base = base.clone();
-        let figures_dir = figures_dir.to_path_buf();
-        let client = client.clone();
-        let progress = progress.clone();
-        async move {
-            let downloaded =
-                download_figure(&client, &url, &figures_dir, &base, max_download_bytes).await;
-            if downloaded.is_some() {
-                fire(&progress, ProgressEvent::FigureDownloadFinished);
-            }
-            (url, downloaded)
-        }
-    });
-
-    let results = stream::iter(tasks)
-        .buffer_unordered(figure_cap)
-        .collect::<Vec<_>>()
-        .await;
-
-    let mut replacements: HashMap<String, String> = HashMap::new();
-    let mut downloaded_figures = 0usize;
-    for (url, local) in results {
-        if let Some(local_path) = local {
-            downloaded_figures += 1;
-            replacements.insert(url, format!("figures/{}", local_path));
-        }
-    }
-
-    let rewritten = replace_image_urls(&markdown, &replacements);
-    Ok((
-        rewritten,
-        downloaded_figures,
-        remote_figure_links,
-        image_blocks,
-    ))
-}
-
-fn extract_image_url(block: &Value) -> Option<String> {
-    for key in ["content", "image_url", "crop_image_url", "url", "file_url"] {
-        if let Some(value) = block.get(key)
-            && let Some(found) = find_http_url(value)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_http_url(value: &Value) -> Option<String> {
-    if let Some(s) = value.as_str() {
-        if is_http_url(s) {
-            return Some(s.to_string());
-        }
-        return None;
-    }
-
-    if let Some(array) = value.as_array() {
-        for item in array {
-            if let Some(found) = find_http_url(item) {
-                return Some(found);
-            }
-        }
-    }
-
-    if let Some(map) = value.as_object() {
-        for item in map.values() {
-            if let Some(found) = find_http_url(item) {
-                return Some(found);
-            }
-        }
-    }
-
-    None
-}
-
-fn is_http_url(value: &str) -> bool {
-    value.starts_with("http://") || value.starts_with("https://")
-}
-
-async fn download_figure(
-    client: &reqwest::Client,
-    remote_url: &str,
-    figures_dir: &Path,
-    base_name: &str,
-    max_download_bytes: u64,
-) -> Option<String> {
-    let parsed = url::Url::parse(remote_url).ok()?;
-    let scheme = parsed.scheme().to_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return None;
-    }
-
-    let response = client
-        .get(remote_url)
-        .header(USER_AGENT, "paperdown/0.1.0")
-        .send()
-        .await
-        .ok()?;
-
-    if !response.status().is_success() {
-        return None;
-    }
-
-    if let Some(length) = response
-        .headers()
-        .get(CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok())
-        && length > max_download_bytes
-    {
-        return None;
-    }
-
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_string());
-
-    if let Some(ref ctype) = content_type
-        && !ctype.to_lowercase().starts_with("image/")
-    {
-        return None;
-    }
-
-    let suffix = content_type_to_suffix(content_type.as_deref())
-        .or_else(|| url_suffix(remote_url))
-        .unwrap_or_else(|| ".img".to_string());
-
-    let filename = format!("{base_name}{suffix}");
-    let output = figures_dir.join(&filename);
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp_path = output.with_extension(format!("tmp-{}-{seed}", std::process::id()));
-    let mut temp_file = match fs::File::create(&temp_path).await {
-        Ok(file) => file,
-        Err(_) => return None,
-    };
-
-    let mut stream = response.bytes_stream();
-    let mut written = 0u64;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.ok()?;
-        written += chunk.len() as u64;
-        if written > max_download_bytes {
-            let _ = fs::remove_file(&temp_path).await;
-            return None;
-        }
-        if temp_file.write_all(&chunk).await.is_err() {
-            let _ = fs::remove_file(&temp_path).await;
-            return None;
-        }
-    }
-
-    if temp_file.flush().await.is_err() {
-        let _ = fs::remove_file(&temp_path).await;
-        return None;
-    }
-    drop(temp_file);
-
-    if fs::rename(&temp_path, &output).await.is_err() {
-        let _ = fs::remove_file(&temp_path).await;
-        return None;
-    }
-
-    Some(filename)
-}
-
-fn content_type_to_suffix(content_type: Option<&str>) -> Option<String> {
-    let ct = content_type?.split(';').next()?.trim().to_ascii_lowercase();
-    let suffix = match ct.as_str() {
-        "image/jpeg" => ".jpg",
-        "image/jpg" => ".jpg",
-        "image/png" => ".png",
-        "image/webp" => ".webp",
-        "image/gif" => ".gif",
-        "image/svg+xml" => ".svg",
-        "image/bmp" => ".bmp",
-        "image/tiff" => ".tif",
-        _ => return None,
-    };
-    Some(suffix.to_string())
-}
-
-fn url_suffix(url: &str) -> Option<String> {
-    let parsed = url::Url::parse(url).ok()?;
-    let path = parsed.path();
-    let ext = Path::new(path).extension()?.to_str()?;
-    if ext.is_empty() {
-        return None;
-    }
-    Some(format!(".{ext}"))
-}
-
-static MARKDOWN_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\((https?://[^)\s]+)\)").expect("valid markdown image URL regex")
-});
-
-static HTML_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(src\s*=\s*)(['"])(https?://[^'"]+)(['"])"#).expect("valid HTML image URL regex")
-});
-
-fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) -> String {
-    let updated = MARKDOWN_IMAGE_URL_PATTERN
-        .replace_all(markdown, |caps: &regex::Captures<'_>| {
-            let remote_url = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-            let replacement = replacements
-                .get(remote_url)
-                .cloned()
-                .unwrap_or_else(|| remote_url.to_string());
-            format!("({replacement})")
-        })
-        .into_owned();
-
-    HTML_IMAGE_URL_PATTERN
-        .replace_all(&updated, |caps: &regex::Captures<'_>| {
-            let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-            let quote = caps.get(2).map(|m| m.as_str()).unwrap_or("\"");
-            let remote_url = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
-            let suffix = caps.get(4).map(|m| m.as_str()).unwrap_or_default();
-            let replacement = replacements
-                .get(remote_url)
-                .cloned()
-                .unwrap_or_else(|| remote_url.to_string());
-            format!("{prefix}{quote}{replacement}{suffix}")
-        })
-        .into_owned()
-}
-
-static HTML_IMAGE_ALT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)\s+alt(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+))?"#)
-        .expect("valid HTML image alt regex")
-});
-
-fn strip_html_img_alt_attributes(markdown: &str) -> String {
-    let mut out = String::with_capacity(markdown.len());
-    let mut chunk_start = 0usize;
-    let mut in_fence = false;
-    let mut fence_marker = '\0';
-    let mut fence_len = 0usize;
-    let mut i = 0usize;
-
-    while i < markdown.len() {
-        let line_end = markdown[i..]
-            .find('\n')
-            .map(|offset| i + offset + 1)
-            .unwrap_or(markdown.len());
-        let line = &markdown[i..line_end];
-
-        if in_fence {
-            out.push_str(line);
-            if is_closing_fence_line(line, fence_marker, fence_len) {
-                in_fence = false;
-                chunk_start = line_end;
-            }
-            i = line_end;
-            continue;
-        }
-
-        if let Some((marker, len)) = fence_start(line) {
-            out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..i]));
-            out.push_str(line);
-            in_fence = true;
-            fence_marker = marker;
-            fence_len = len;
-            chunk_start = line_end;
-            i = line_end;
-            continue;
-        }
-
-        i = line_end;
-    }
-
-    if !in_fence {
-        out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..]));
-    }
-
-    out
-}
-
-fn sanitize_non_code_chunk(chunk: &str) -> String {
-    let mut out = String::with_capacity(chunk.len());
-    let mut i = 0usize;
-
-    while i < chunk.len() {
-        if let Some(run_len) = backtick_run_len(chunk, i)
-            && let Some(end) = find_matching_backtick_run(chunk, i + run_len, run_len)
-        {
-            out.push_str(&chunk[i..end + run_len]);
-            i = end + run_len;
-            continue;
-        }
-
-        if starts_html_img_tag(chunk, i)
-            && let Some(tag_end) = find_html_tag_end(chunk, i)
-        {
-            out.push_str(&HTML_IMAGE_ALT_PATTERN.replace_all(&chunk[i..tag_end], ""));
-            i = tag_end;
-            continue;
-        }
-
-        let ch = chunk[i..].chars().next().expect("valid char boundary");
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-
-    out
-}
-
-fn backtick_run_len(text: &str, start: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'`') {
-        return None;
-    }
-
-    let mut len = 1usize;
-    while start + len < bytes.len() && bytes[start + len] == b'`' {
-        len += 1;
-    }
-    Some(len)
-}
-
-fn find_matching_backtick_run(text: &str, start: usize, run_len: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    let mut i = start;
-
-    while i + run_len <= bytes.len() {
-        if bytes[i] == b'`' && bytes[i..i + run_len].iter().all(|b| *b == b'`') {
-            return Some(i);
-        }
-        i += 1;
-    }
-
-    None
-}
-
-fn starts_html_img_tag(text: &str, start: usize) -> bool {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'<') {
-        return false;
-    }
-
-    let Some(prefix) = text.get(start + 1..start + 4) else {
-        return false;
-    };
-    if !prefix.eq_ignore_ascii_case("img") {
-        return false;
-    }
-
-    !matches!(bytes.get(start + 4), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
-}
-
-fn find_html_tag_end(text: &str, start: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut i = start + 1;
-
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\'' if !in_double => in_single = !in_single,
-            b'"' if !in_single => in_double = !in_double,
-            b'>' if !in_single && !in_double => return Some(i + 1),
-            _ => {}
-        }
-        i += 1;
-    }
-
-    None
-}
-
-fn fence_start(line: &str) -> Option<(char, usize)> {
-    let trimmed = line.trim_start();
-    let mut chars = trimmed.chars();
-    let marker = chars.next()?;
-    if marker != '`' && marker != '~' {
-        return None;
-    }
-
-    let mut len = 1usize;
-    for c in chars {
-        if c == marker {
-            len += 1;
-        } else {
-            break;
-        }
-    }
-
-    if len < 3 {
-        return None;
-    }
-
-    Some((marker, len))
-}
-
-fn is_closing_fence_line(line: &str, marker: char, len: usize) -> bool {
-    let trimmed = line.trim_start();
-    let mut chars = trimmed.chars();
-    let mut count = 0usize;
-
-    while matches!(chars.clone().next(), Some(c) if c == marker) {
-        chars.next();
-        count += 1;
-    }
-
-    count >= len && chars.all(char::is_whitespace)
-}
-
-async fn append_log(log_path: &Path, entry: Value) -> Result<()> {
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .await?;
-    let line = serde_json::to_string(&entry)?;
-    file.write_all(line.as_bytes()).await?;
-    file.write_all(b"\n").await?;
-    Ok(())
-}
-
-async fn atomic_write_text(path: &Path, content: &str) -> Result<()> {
-    atomic_write_bytes(path, content.as_bytes()).await
-}
-
-async fn atomic_write_bytes(path: &Path, content: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp_path = path.with_extension(format!("tmp-{}-{seed}", std::process::id()));
-    let mut temp_file = fs::File::create(&temp_path).await?;
-    temp_file.write_all(content).await?;
-    temp_file.flush().await?;
-    drop(temp_file);
-    fs::rename(&temp_path, path).await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::assets::{content_type_to_suffix, extract_image_url, is_http_url, url_suffix};
+    #[cfg(feature = "net-tests")]
+    use super::assets::{download_figure, localize_figures};
+    use super::input::{collect_pdfs, load_api_key};
+    use super::markdown::{replace_image_urls, strip_html_img_alt_attributes};
+    use super::ocr::{build_payload, validate_layout_response};
+    use super::output::{append_log, atomic_write_text, prepare_output_paths};
+    use super::{ProgressCallback, ProgressEvent, fire, process_pdf, round3};
     #[cfg(feature = "net-tests")]
     use httpmock::prelude::*;
+    use serde_json::{Value, json};
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
     use tempfile::TempDir;
     #[cfg(feature = "net-tests")]
     use tokio::io::AsyncReadExt;
