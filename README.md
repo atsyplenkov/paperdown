@@ -112,6 +112,12 @@ ZAI_API_KEY=your-api-key
 
 Then, run `paperdown` as usual, or specify a different file using `--env-file`.
 
+## Examples
+
+Another example of a table that was parsed incorrectly from a paper is shown below. The paper by Van Rompaey et al. (2005) was converted to markdown by `marker` incorrectly after about 4 minutes of runtime on T4 GPUs in Google Colab. Using LLM postprocessing in `marker` (with the `--use-llm` flag and the GEMINI model), the model parsed the table correctly. However, the compute time increased to about 5 minutes and the GEMINI API call cost around `$0.02`. The `paperdown` tool parsed the table correctly, returned the files after 24 seconds, and used `46945` tokens, costing approximately `$0.0014`.
+
+![](assets/paperdown_example.png)
+
 ## Cost (Rough Estimate)
 
 The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens (both input and output), processing an average-sized scientific paper like [Batista et al., 2022](https://hess.copernicus.org/articles/26/3753/2022/) with `total_tokens = 79,080` costs approximately `$0.0023724`. This is about 0.24 cents per article.
