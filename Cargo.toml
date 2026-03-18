@@ -23,6 +23,7 @@ strip = "symbols"
 [features]
 default = []
 net-tests = []
+internal-testing = []
 
 [dependencies]
 anyhow = "1"
