@@ -174,6 +174,7 @@ pub async fn process_pdf(
     )
     .await?;
     let figure_seconds = figure_started.elapsed();
+    let markdown = strip_html_img_alt_attributes(&markdown);
 
     fire(
         &progress,
@@ -616,6 +617,185 @@ fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) ->
             format!("{prefix}{quote}{replacement}{suffix}")
         })
         .into_owned()
+}
+
+static HTML_IMAGE_ALT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)\s+alt(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+))?"#)
+        .expect("valid HTML image alt regex")
+});
+
+fn strip_html_img_alt_attributes(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut chunk_start = 0usize;
+    let mut in_fence = false;
+    let mut fence_marker = '\0';
+    let mut fence_len = 0usize;
+    let mut i = 0usize;
+
+    while i < markdown.len() {
+        let line_end = markdown[i..]
+            .find('\n')
+            .map(|offset| i + offset + 1)
+            .unwrap_or(markdown.len());
+        let line = &markdown[i..line_end];
+
+        if in_fence {
+            out.push_str(line);
+            if is_closing_fence_line(line, fence_marker, fence_len) {
+                in_fence = false;
+                chunk_start = line_end;
+            }
+            i = line_end;
+            continue;
+        }
+
+        if let Some((marker, len)) = fence_start(line) {
+            out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..i]));
+            out.push_str(line);
+            in_fence = true;
+            fence_marker = marker;
+            fence_len = len;
+            chunk_start = line_end;
+            i = line_end;
+            continue;
+        }
+
+        i = line_end;
+    }
+
+    if !in_fence {
+        out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..]));
+    }
+
+    out
+}
+
+fn sanitize_non_code_chunk(chunk: &str) -> String {
+    let mut out = String::with_capacity(chunk.len());
+    let mut i = 0usize;
+
+    while i < chunk.len() {
+        if let Some(run_len) = backtick_run_len(chunk, i)
+            && let Some(end) = find_matching_backtick_run(chunk, i + run_len, run_len)
+        {
+            out.push_str(&chunk[i..end + run_len]);
+            i = end + run_len;
+            continue;
+        }
+
+        if starts_html_img_tag(chunk, i)
+            && let Some(tag_end) = find_html_tag_end(chunk, i)
+        {
+            out.push_str(&HTML_IMAGE_ALT_PATTERN.replace_all(&chunk[i..tag_end], ""));
+            i = tag_end;
+            continue;
+        }
+
+        let ch = chunk[i..].chars().next().expect("valid char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn backtick_run_len(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if bytes.get(start) != Some(&b'`') {
+        return None;
+    }
+
+    let mut len = 1usize;
+    while start + len < bytes.len() && bytes[start + len] == b'`' {
+        len += 1;
+    }
+    Some(len)
+}
+
+fn find_matching_backtick_run(text: &str, start: usize, run_len: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = start;
+
+    while i + run_len <= bytes.len() {
+        if bytes[i] == b'`' && bytes[i..i + run_len].iter().all(|b| *b == b'`') {
+            return Some(i);
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn starts_html_img_tag(text: &str, start: usize) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.get(start) != Some(&b'<') {
+        return false;
+    }
+
+    let Some(prefix) = text.get(start + 1..start + 4) else {
+        return false;
+    };
+    if !prefix.eq_ignore_ascii_case("img") {
+        return false;
+    }
+
+    !matches!(bytes.get(start + 4), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+}
+
+fn find_html_tag_end(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut i = start + 1;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'>' if !in_single && !in_double => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn fence_start(line: &str) -> Option<(char, usize)> {
+    let trimmed = line.trim_start();
+    let mut chars = trimmed.chars();
+    let marker = chars.next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+
+    let mut len = 1usize;
+    for c in chars {
+        if c == marker {
+            len += 1;
+        } else {
+            break;
+        }
+    }
+
+    if len < 3 {
+        return None;
+    }
+
+    Some((marker, len))
+}
+
+fn is_closing_fence_line(line: &str, marker: char, len: usize) -> bool {
+    let trimmed = line.trim_start();
+    let mut chars = trimmed.chars();
+    let mut count = 0usize;
+
+    while matches!(chars.clone().next(), Some(c) if c == marker) {
+        chars.next();
+        count += 1;
+    }
+
+    count >= len && chars.all(char::is_whitespace)
 }
 
 async fn append_log(log_path: &Path, entry: Value) -> Result<()> {
@@ -1255,6 +1435,66 @@ mod tests {
 
         let updated = replace_image_urls(markdown, &replacements);
         assert_eq!(updated, markdown);
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_removes_alt_and_preserves_other_attrs() {
+        let markdown = "before <img src='x.png' alt='OCR图片' data-id='1'/> after";
+
+        let updated = strip_html_img_alt_attributes(markdown);
+
+        assert_eq!(updated, "before <img src='x.png' data-id='1'/> after");
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_handles_case_and_spacing() {
+        let markdown = "<IMG\n  SRC=\"x.png\"\n  ALT=\"OCR图片\"\n  title='keep me'>";
+
+        let updated = strip_html_img_alt_attributes(markdown);
+
+        assert_eq!(updated, "<IMG\n  SRC=\"x.png\"\n  title='keep me'>");
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_leaves_markdown_and_code_unchanged() {
+        let markdown = "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<img src='y.png' alt='OCR图片'/>`";
+
+        let updated = strip_html_img_alt_attributes(markdown);
+
+        assert_eq!(
+            updated,
+            "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<img src='y.png' alt='OCR图片'/>`"
+        );
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_removes_multiple_alt_attributes() {
+        let markdown = "<img alt='one' src='x.png' ALT=\"two\"/>";
+
+        let updated = strip_html_img_alt_attributes(markdown);
+
+        assert_eq!(updated, "<img src='x.png'/>");
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_removes_boolean_and_unquoted_alt() {
+        let markdown = "<img alt src='x.png' alt=x data-id='1'>";
+
+        let updated = strip_html_img_alt_attributes(markdown);
+
+        assert_eq!(updated, "<img src='x.png' data-id='1'>");
+    }
+
+    #[test]
+    fn strip_html_img_alt_attributes_keeps_localized_image_urls() {
+        let markdown = "<img src='https://x/a.png' alt='OCR图片'/>";
+        let mut replacements = HashMap::new();
+        replacements.insert("https://x/a.png".to_string(), "figures/a.png".to_string());
+
+        let localized = replace_image_urls(markdown, &replacements);
+        let updated = strip_html_img_alt_attributes(&localized);
+
+        assert_eq!(updated, "<img src='figures/a.png'/>");
     }
 
     #[test]
