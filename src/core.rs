@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -414,7 +415,7 @@ async fn localize_figures(
         }
     }
 
-    let rewritten = replace_image_urls(&markdown, &replacements)?;
+    let rewritten = replace_image_urls(&markdown, &replacements);
     Ok((
         rewritten,
         downloaded_figures,
@@ -582,11 +583,16 @@ fn url_suffix(url: &str) -> Option<String> {
     Some(format!(".{ext}"))
 }
 
-fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) -> Result<String> {
-    let markdown_pattern = Regex::new(r"\((https?://[^)\s]+)\)")?;
-    let html_pattern = Regex::new(r#"(src\s*=\s*)(['"])(https?://[^'"]+)(['"])"#)?;
+static MARKDOWN_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\((https?://[^)\s]+)\)").expect("valid markdown image URL regex")
+});
 
-    let updated = markdown_pattern
+static HTML_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(src\s*=\s*)(['"])(https?://[^'"]+)(['"])"#).expect("valid HTML image URL regex")
+});
+
+fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) -> String {
+    let updated = MARKDOWN_IMAGE_URL_PATTERN
         .replace_all(markdown, |caps: &regex::Captures<'_>| {
             let remote_url = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
             let replacement = replacements
@@ -597,7 +603,7 @@ fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) ->
         })
         .into_owned();
 
-    Ok(html_pattern
+    HTML_IMAGE_URL_PATTERN
         .replace_all(&updated, |caps: &regex::Captures<'_>| {
             let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
             let quote = caps.get(2).map(|m| m.as_str()).unwrap_or("\"");
@@ -609,7 +615,7 @@ fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) ->
                 .unwrap_or_else(|| remote_url.to_string());
             format!("{prefix}{quote}{replacement}{suffix}")
         })
-        .into_owned())
+        .into_owned()
 }
 
 async fn append_log(log_path: &Path, entry: Value) -> Result<()> {
@@ -1211,7 +1217,7 @@ mod tests {
             "https://x/fig.png".to_string(),
             "figures/f1.png".to_string(),
         );
-        let updated = replace_image_urls(markdown, &replacements).unwrap();
+        let updated = replace_image_urls(markdown, &replacements);
         assert!(updated.contains("![](figures/f1.png)"));
         assert!(updated.contains("![](https://x/fig.png?v=1)"));
     }
@@ -1224,8 +1230,31 @@ mod tests {
             "https://x/fig.png".to_string(),
             "figures/f1.png".to_string(),
         );
-        let updated = replace_image_urls(markdown, &replacements).unwrap();
+        let updated = replace_image_urls(markdown, &replacements);
         assert_eq!(updated, "<img src='figures/f1.png' alt='x'/>");
+    }
+
+    #[test]
+    fn replace_image_urls_mixed_markdown_and_html() {
+        let markdown = "start ![](https://x/a.png) mid <img src=\"https://x/b.jpg\" alt='x'/> end ![](https://x/c.png?query=1)";
+        let mut replacements = HashMap::new();
+        replacements.insert("https://x/a.png".to_string(), "figures/a.png".to_string());
+        replacements.insert("https://x/b.jpg".to_string(), "figures/b.jpg".to_string());
+
+        let updated = replace_image_urls(markdown, &replacements);
+        assert_eq!(
+            updated,
+            "start ![](figures/a.png) mid <img src=\"figures/b.jpg\" alt='x'/> end ![](https://x/c.png?query=1)"
+        );
+    }
+
+    #[test]
+    fn replace_image_urls_no_replacements_passthrough() {
+        let markdown = "plain text ![](https://x/a.png) <img src='https://x/b.jpg' alt='x'/>";
+        let replacements = HashMap::new();
+
+        let updated = replace_image_urls(markdown, &replacements);
+        assert_eq!(updated, markdown);
     }
 
     #[test]
