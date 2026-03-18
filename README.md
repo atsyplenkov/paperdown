@@ -1,61 +1,68 @@
 <h1 align=center><code>paperdown</code></h1>
 
 <p align="center">
-    <!--<a href="https://github.com/atsyplenkov/paperdown/releases">
+    <a href="https://github.com/atsyplenkov/paperdown/releases">
         <img src="https://img.shields.io/github/v/release/atsyplenkov/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub&logoColor=white"></a>
     <a href="https://crates.io/crates/paperdown/">
-        <img src="https://img.shields.io/crates/v/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>-->
+        <img src="https://img.shields.io/crates/v/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>
     <a href="https://codecov.io/gh/atsyplenkov/paperdown">
         <img src="https://img.shields.io/codecov/c/gh/atsyplenkov/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Codecov&logoColor=white"></a>
-    <!--<br>-->
+    <br>
     <a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-ci.yml">
         <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-ci.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white"></a>
-    <!--<a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-cd.yml">
-        <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-cd.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white&label=deploy"></a>-->
-    <!--<a href="https://docs.rs/paperdown/">
-        <img src="https://img.shields.io/docsrs/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>-->
+    <a href="https://github.com/atsyplenkov/paperdown/actions/workflows/rust-cd.yml">
+        <img src="https://img.shields.io/github/actions/workflow/status/atsyplenkov/paperdown/rust-cd.yml?style=flat&labelColor=1C2C2E&color=dea584&logo=GitHub%20Actions&logoColor=white&label=deploy"></a>
+    <a href="https://docs.rs/paperdown/">
+        <img src="https://img.shields.io/docsrs/paperdown?style=flat&labelColor=1C2C2E&color=dea584&logo=Rust&logoColor=white"></a>
     <br>
 </p>
 
-`paperdown` converts paper PDFs into Markdown using Z.AI OCR and downloads referenced figure assets locally.
+`paperdown` converts research papers from PDF to Markdown using Z.AI's [GLM-OCR](https://github.com/zai-org/GLM-OCR) model and downloads referenced figure assets locally.
 
-If you work with papers, you already know the annoying part is not the OCR itself. It is the cleanup. Tables go missing, table structure gets mixed up, and formulas sometimes come back as plain text noise. You end up spending more time fixing the output than reading the paper.
+If you work with academic papers, you know that the OCR process itself is not the most difficult part. The real challenge is cleaning up the output. Tables can disappear, their structure can become jumbled, and formulas might be converted into meaningless text. This often means you spend more time correcting the output than working with it.
 
-This project exists because Docling and Marker are both good tools, but in practice they can still skip tables or mix table structure in ways that need manual repair. Docling can also struggle with formula parsing in some papers. I wanted a simple, repeatable pipeline that produces one Markdown file, a local `figures/` folder, and a possibility to batch process all my library.
+I used to rely on [`marker`](https://github.com/datalab-to/marker) for PDF parsing and thought it was great. However, after converting the [Batista et al. (2022)](https://hess.copernicus.org/articles/26/3753/2022/) article one day, I discovered that Table 4 was missing, regardless of the settings or LLMs I used (via the `--use-llm` flag). I then switched to [`docling`](https://github.com/docling-project/docling), and Table 4 reappeared, but all the formulas were gone. Furthermore, both tools require a GPU, and even on a Google Colab T4 instance, processing one article takes 4 to 5 minutes.
+
+Therefore, this project was created because, while [`docling`](https://github.com/docling-project/docling) and [`marker`](https://github.com/datalab-to/marker) are both good tools, they can sometimes miss tables or mix up table structures in ways that require manual correction. I wanted a simple, reliable process that produces a single Markdown file I can trust, a local `figures/` folder, and the ability to process my entire library quickly on my laptop.
 
 ## Features
 
-- Async OCR requests and batch PDF processing
-- Concurrent figure downloads per PDF
-- Fast! It takes approximately 25 sec per batch. The speed depends on the z.ai API availability. See 
+- Async OCR requests and batch PDF processing using the Z.AI API.
+- Concurrent figure downloads for each PDF.
+- Fast processing: approximately 25 seconds per batch of 32 PDFs. Speed depends on the z.ai API availability. See the cost section for more details on spending.
+
+> [!note]
+> This tool was designed to be used with academic papers written in English. Parsing other PDFs, heavy in tables or figures, or in other languages rather than English has not been tested.
 
 ## Usage
+
+Start by running:
 
 ```bash
 paperdown --input path/to/paper.pdf
 ```
 
-Batch directory mode:
+My preferred method is batch directory processing:
 
 ```bash
 paperdown --input pdf/ --output md/ --workers 4 --overwrite
 ```
 
-## Install
+## Installation
 
-<!--Install from crates.io:-->
+Install from crates.io:
 
 ```bash
-cargo install --git https://github.com/atsyplenkov/paperdown.git
+cargo install paperdown
 ```
 
 Install from source (this repository):
 
 ```bash
-cargo install --path .
+cargo install --git https://github.com/atsyplenkov/paperdown.git
 ```
 
-## CLI
+## CLI Usage
 
 ```text
 $ paperdown --help
@@ -85,31 +92,36 @@ Options:
   -V, --version                                  Print version
 ```
 
-## API key
+## API Key
 
-`paperdown` reads `ZAI_API_KEY` from `--env-file` first. If not found, it falls back to the environment.
+`paperdown` first looks for `ZAI_API_KEY` in the `--env-file`. If it is not found, it then checks the environment variables. To obtain a key, create an account in the [Z.AI console](https://z.ai/manage-apikey/apikey-list) and generate an API key from your account settings.
+### Storing the Key
 
-### Get a key
-
-Create an account in the Z.AI console, then generate an API key from your account settings. In most dashboards this is under Settings, then API keys. Create a new key and copy it once, as you will not be able to view it again.
-
-### Store it
-
-The simplest option is to set `ZAI_API_KEY` in your shell environment.
+The easiest method is to set `ZAI_API_KEY` in your shell environment.
 
 ```bash
 export ZAI_API_KEY="your-api-key"
 paperdown --input path/to/paper.pdf
 ```
 
-If you prefer a file, create a `.env` file in the project root.
+If you prefer to use a file, create a `.env` file in the project's root directory.
 
 ```dotenv
 ZAI_API_KEY=your-api-key
 ```
 
-Then run `paperdown` normally, or point to a different file with `--env-file`.
+Then, run `paperdown` as usual, or specify a different file using `--env-file`.
 
-## Cost
+## Cost (Rough Estimate)
 
-The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens, the average size scientific paper ([Batista et al., 2022](https://hess.copernicus.org/articles/26/3753/2022/)) process with `total_tokens = 79,080` costs `$0.0023724`. That is roughly `0.24` cents per article.
+The tool records token usage in `log.jsonl` under the `usage` field. With pricing at `$0.03` per `1,000,000` tokens (both input and output), processing an average-sized scientific paper like [Batista et al., 2022](https://hess.copernicus.org/articles/26/3753/2022/) with `total_tokens = 79,080` costs approximately `$0.0023724`. This is about 0.24 cents per article.
+
+## Related Projects
+
+* [`docling`](https://github.com/docling-project/docling) — my preference if you do not need tables, figures, or formulas.
+* [`marker`](https://github.com/datalab-to/marker) — good for extracting formulas with LLM post-processing.
+* [`opendataloader-pdf`](https://github.com/opendataloader-project/opendataloader-pdf) — I have not tried this yet, but its benchmarks are very good.
+
+## Licence
+
+MIT
