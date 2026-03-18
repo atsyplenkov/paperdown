@@ -156,6 +156,8 @@ mod tests {
     #[cfg(feature = "net-tests")]
     use tokio::io::AsyncReadExt;
     #[cfg(feature = "net-tests")]
+    use tokio::io::AsyncWriteExt;
+    #[cfg(feature = "net-tests")]
     use tokio::net::TcpListener;
 
     fn env_lock() -> &'static Mutex<()> {
