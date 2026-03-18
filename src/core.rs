@@ -511,23 +511,45 @@ async fn download_figure(
         return None;
     }
 
-    let mut stream = response.bytes_stream();
-    let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.ok()?;
-        bytes.extend_from_slice(&chunk);
-        if bytes.len() as u64 > max_download_bytes {
-            return None;
-        }
-    }
-
     let suffix = content_type_to_suffix(content_type.as_deref())
         .or_else(|| url_suffix(remote_url))
         .unwrap_or_else(|| ".img".to_string());
 
     let filename = format!("{base_name}{suffix}");
     let output = figures_dir.join(&filename);
-    if atomic_write_bytes(&output, &bytes).await.is_err() {
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_path = output.with_extension(format!("tmp-{}-{seed}", std::process::id()));
+    let mut temp_file = match fs::File::create(&temp_path).await {
+        Ok(file) => file,
+        Err(_) => return None,
+    };
+
+    let mut stream = response.bytes_stream();
+    let mut written = 0u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        written += chunk.len() as u64;
+        if written > max_download_bytes {
+            let _ = fs::remove_file(&temp_path).await;
+            return None;
+        }
+        if temp_file.write_all(&chunk).await.is_err() {
+            let _ = fs::remove_file(&temp_path).await;
+            return None;
+        }
+    }
+
+    if temp_file.flush().await.is_err() {
+        let _ = fs::remove_file(&temp_path).await;
+        return None;
+    }
+    drop(temp_file);
+
+    if fs::rename(&temp_path, &output).await.is_err() {
+        let _ = fs::remove_file(&temp_path).await;
         return None;
     }
 
@@ -636,6 +658,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
+    #[cfg(feature = "net-tests")]
+    use tokio::io::AsyncReadExt;
+    #[cfg(feature = "net-tests")]
+    use tokio::net::TcpListener;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -935,6 +961,35 @@ mod tests {
     }
 
     #[cfg(feature = "net-tests")]
+    async fn start_chunked_image_server(
+        chunks: Vec<Vec<u8>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request_buf = [0u8; 1024];
+            let _ = socket.read(&mut request_buf).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            for chunk in chunks {
+                let _ = socket
+                    .write_all(format!("{:X}\r\n", chunk.len()).as_bytes())
+                    .await;
+                let _ = socket.write_all(&chunk).await;
+                let _ = socket.write_all(b"\r\n").await;
+            }
+            let _ = socket.write_all(b"0\r\n\r\n").await;
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[cfg(feature = "net-tests")]
     #[test]
     fn download_figure_accepts_image_from_mock_server() {
         let server = MockServer::start();
@@ -993,6 +1048,53 @@ mod tests {
 
         text_mock.assert_hits(1);
         assert!(result.is_none());
+    }
+
+    #[cfg(feature = "net-tests")]
+    #[test]
+    fn download_figure_streams_chunked_response_and_cleans_up_on_limit() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (url, server_task) = rt.block_on(start_chunked_image_server(vec![
+            vec![1, 2, 3, 4],
+            vec![5, 6, 7, 8],
+        ]));
+
+        let tmp = TempDir::new().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let result = rt.block_on(download_figure(&client, &url, tmp.path(), "fig-001-001", 3));
+
+        assert!(result.is_none());
+        assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+        rt.block_on(server_task).unwrap();
+    }
+
+    #[cfg(feature = "net-tests")]
+    #[test]
+    fn download_figure_streams_chunked_response_successfully() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (url, server_task) =
+            rt.block_on(start_chunked_image_server(vec![vec![1, 2], vec![3, 4]]));
+
+        let tmp = TempDir::new().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let name = rt.block_on(download_figure(
+            &client,
+            &url,
+            tmp.path(),
+            "fig-001-001",
+            1024,
+        ));
+
+        assert_eq!(name.as_deref(), Some("fig-001-001.png"));
+        let file = tmp.path().join(name.unwrap());
+        assert_eq!(std::fs::read(&file).unwrap(), vec![1, 2, 3, 4]);
+        rt.block_on(server_task).unwrap();
     }
 
     #[cfg(feature = "net-tests")]
