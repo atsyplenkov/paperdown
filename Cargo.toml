@@ -1,9 +1,9 @@
 [package]
 name = "paperdown"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Anatoly Tsyplenkov <atsyplenkov@fastmail.com>"]
 edition = "2024"
-description = "Convert paper PDFs into markdown with local figures using Z.AI OCR."
+description = "A fast CLI tool to batch convert PDFs into Markdown using GLM-OCR."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/atsyplenkov/paperdown"

@@ -13,6 +13,18 @@ Possible sections are:
 
 <!-- next-header -->
 
+## [0.2.0] - 2026-03-18
+
+- published on crates.io
+
+### Changed:
+- reduced the binary size
+- added in-memory buffering of downloaded figures
+- switched to dotenvy as a `.env` reader
+
+### Fixed:
+- make `Regex` reusable
+
 ## [0.1.0] - 2026-03-16
 
 - initial release, basic coverage of the Z.AI GLM-OCR API
