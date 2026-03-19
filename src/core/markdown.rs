@@ -6,6 +6,49 @@ use std::sync::LazyLock;
 
 const HTML_FRAGMENT_CONCURRENCY: usize = 16;
 
+const HTML_ALLOWLIST_TAGS: &[&str] = &[
+    "img",
+    "a",
+    "p",
+    "div",
+    "span",
+    "br",
+    "hr",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "th",
+    "td",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "s",
+    "del",
+    "pre",
+    "code",
+];
+
+const HTML_EXCLUDED_TAGS: &[&str] = &["math", "sub", "sup"];
+
+const HTML_VOID_TAGS: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+    "source", "track", "wbr",
+];
+
 static MARKDOWN_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\((https?://[^)\s]+)\)").expect("valid markdown image URL regex")
 });
@@ -19,6 +62,21 @@ enum Segment {
     Text(String),
     Code(String),
     Html { index: usize, raw: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HtmlTagKind {
+    Opening,
+    Closing,
+    Special,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedHtmlTag<'a> {
+    name: &'a str,
+    kind: HtmlTagKind,
+    end: usize,
+    self_closing: bool,
 }
 
 pub(crate) fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) -> String {
@@ -178,17 +236,26 @@ fn join_segments(segments: &[Segment], converted: &[Option<String>]) -> String {
 }
 
 fn extract_html_fragment(text: &str, start: usize) -> Option<(usize, String)> {
-    if starts_html_tag(text, start, "table") {
-        let end = find_table_fragment_end(text, start)?;
-        return Some((end, text[start..end].to_string()));
+    let tag = parse_html_tag(text, start)?;
+    if tag.kind != HtmlTagKind::Opening {
+        return None;
     }
 
-    if starts_html_tag(text, start, "img") {
-        let end = find_html_tag_end(text, start)?;
-        return Some((end, text[start..end].to_string()));
+    if !is_html_allowlisted(tag.name) || is_html_excluded(tag.name) {
+        return None;
     }
 
-    None
+    let end = if tag.self_closing || is_html_void(tag.name) {
+        tag.end
+    } else {
+        find_html_region_end(text, start, tag.name)?
+    };
+    let fragment = text[start..end].to_string();
+    if contains_tex_delimiters(&fragment) || contains_excluded_math_tags(&fragment) {
+        return None;
+    }
+
+    Some((end, fragment))
 }
 
 async fn convert_html_fragments(fragments: Vec<String>) -> Vec<Option<String>> {
@@ -241,67 +308,114 @@ fn find_matching_backtick_run(text: &str, start: usize, run_len: usize) -> Optio
     None
 }
 
-fn starts_html_tag(text: &str, start: usize, tag: &str) -> bool {
+fn parse_html_tag(text: &str, start: usize) -> Option<ParsedHtmlTag<'_>> {
     let bytes = text.as_bytes();
     if bytes.get(start) != Some(&b'<') {
-        return false;
+        return None;
     }
 
-    let tag_start = start + 1;
-    let tag_end = tag_start + tag.len();
-    let Some(candidate) = text.get(tag_start..tag_end) else {
-        return false;
-    };
-    if !candidate.eq_ignore_ascii_case(tag) {
-        return false;
+    if matches!(bytes.get(start + 1), Some(b'!') | Some(b'?')) {
+        let end = find_html_tag_end(text, start)?;
+        return Some(ParsedHtmlTag {
+            name: "",
+            kind: HtmlTagKind::Special,
+            end,
+            self_closing: false,
+        });
     }
 
-    !matches!(bytes.get(tag_end), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+    if bytes.get(start + 1) == Some(&b'/') {
+        let name_start = start + 2;
+        let name_end = name_end(text, name_start)?;
+        let end = find_html_tag_end(text, start)?;
+        return Some(ParsedHtmlTag {
+            name: &text[name_start..name_end],
+            kind: HtmlTagKind::Closing,
+            end,
+            self_closing: false,
+        });
+    }
+
+    let name_start = start + 1;
+    let name_end = name_end(text, name_start)?;
+    let end = find_html_tag_end(text, start)?;
+    let self_closing = is_self_closing_tag(text, start, end);
+
+    Some(ParsedHtmlTag {
+        name: &text[name_start..name_end],
+        kind: HtmlTagKind::Opening,
+        end,
+        self_closing,
+    })
 }
 
-fn starts_end_html_tag(text: &str, start: usize, tag: &str) -> bool {
+fn name_end(text: &str, start: usize) -> Option<usize> {
     let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'<') || bytes.get(start + 1) != Some(&b'/') {
-        return false;
+    let mut i = start;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b':' | b'_') {
+            i += 1;
+            continue;
+        }
+        break;
     }
 
-    let tag_start = start + 2;
-    let tag_end = tag_start + tag.len();
-    let Some(candidate) = text.get(tag_start..tag_end) else {
-        return false;
-    };
-    if !candidate.eq_ignore_ascii_case(tag) {
-        return false;
-    }
-
-    !matches!(bytes.get(tag_end), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+    (i > start).then_some(i)
 }
 
-fn find_table_fragment_end(text: &str, start: usize) -> Option<usize> {
-    let mut depth = 1usize;
-    let mut i = find_html_tag_end(text, start)?;
+fn is_self_closing_tag(text: &str, start: usize, end: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = end.saturating_sub(1);
+    while i > start && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+
+    bytes.get(i - 1) == Some(&b'/')
+}
+
+fn find_html_region_end(text: &str, start: usize, root_tag: &str) -> Option<usize> {
+    let root = parse_html_tag(text, start)?;
+    if root.kind != HtmlTagKind::Opening {
+        return None;
+    }
+
+    let mut stack = vec![root_tag.to_ascii_lowercase()];
+    let mut i = root.end;
 
     while i < text.len() {
-        let ch = text[i..].chars().next()?;
-        if ch == '<' {
-            if starts_html_tag(text, i, "table") {
-                let end = find_html_tag_end(text, i)?;
-                depth += 1;
-                i = end;
-                continue;
-            }
-
-            if starts_end_html_tag(text, i, "table") {
-                let end = find_html_tag_end(text, i)?;
-                depth = depth.saturating_sub(1);
-                i = end;
-                if depth == 0 {
-                    return Some(end);
+        if text.as_bytes().get(i) == Some(&b'<') && let Some(tag) = parse_html_tag(text, i) {
+            match tag.kind {
+                HtmlTagKind::Special => {
+                    i = tag.end;
+                    continue;
                 }
-                continue;
+                HtmlTagKind::Closing => {
+                    let Some(current) = stack.last() else {
+                        return None;
+                    };
+                    if !current.eq_ignore_ascii_case(tag.name) {
+                        return None;
+                    }
+                    stack.pop();
+                    i = tag.end;
+                    if stack.is_empty() {
+                        return Some(i);
+                    }
+                    continue;
+                }
+                HtmlTagKind::Opening => {
+                    if !(tag.self_closing || is_html_void(tag.name)) {
+                        stack.push(tag.name.to_ascii_lowercase());
+                    }
+                    i = tag.end;
+                    continue;
+                }
             }
         }
 
+        let ch = text[i..].chars().next()?;
         i += ch.len_utf8();
     }
 
@@ -325,6 +439,71 @@ fn find_html_tag_end(text: &str, start: usize) -> Option<usize> {
     }
 
     None
+}
+
+fn is_html_allowlisted(tag: &str) -> bool {
+    HTML_ALLOWLIST_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+}
+
+fn is_html_excluded(tag: &str) -> bool {
+    HTML_EXCLUDED_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+}
+
+fn is_html_void(tag: &str) -> bool {
+    HTML_VOID_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+}
+
+fn contains_excluded_math_tags(fragment: &str) -> bool {
+    let mut i = 0usize;
+
+    while i < fragment.len() {
+        if let Some(run_len) = backtick_run_len(fragment, i)
+            && let Some(end) = find_matching_backtick_run(fragment, i + run_len, run_len)
+        {
+            i = end + run_len;
+            continue;
+        }
+
+        if let Some(tag) = parse_html_tag(fragment, i)
+            && matches!(tag.kind, HtmlTagKind::Opening | HtmlTagKind::Closing)
+            && is_html_excluded(tag.name)
+        {
+            return true;
+        }
+
+        let ch = fragment[i..].chars().next().expect("valid char boundary");
+        i += ch.len_utf8();
+    }
+
+    false
+}
+
+fn contains_tex_delimiters(fragment: &str) -> bool {
+    let bytes = fragment.as_bytes();
+    let mut i = 0usize;
+    let mut saw_dollar = false;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i = i.saturating_add(2);
+            continue;
+        }
+
+        if bytes[i] == b'$' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+                return true;
+            }
+
+            if saw_dollar {
+                return true;
+            }
+            saw_dollar = true;
+        }
+
+        i += 1;
+    }
+
+    false
 }
 
 fn fence_start(line: &str) -> Option<(char, usize)> {

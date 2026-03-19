@@ -624,16 +624,17 @@ fn sanitize_html_fragments_smoke() {
 }
 
 #[test]
-fn sanitize_html_fragments_converts_tables_and_images() {
-    let markdown = "start <table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table> end <img src='https://x/a.png' alt='OCR图片'/>";
+fn sanitize_html_fragments_converts_common_html_regions() {
+    let markdown = "start <p>Hello <a href='https://x'>world</a></p> mid <h2>Title</h2> end";
 
     let updated = sanitize_html(markdown);
 
-    assert!(!updated.contains("<table"));
-    assert!(!updated.contains("<img"));
-    assert!(updated.contains("|"));
-    assert!(updated.contains("B"));
-    assert!(updated.contains("![OCR图片](https://x/a.png)"));
+    assert!(!updated.contains("<p"));
+    assert!(!updated.contains("<a "));
+    assert!(!updated.contains("<h2"));
+    assert!(updated.contains("Hello"));
+    assert!(updated.contains("[world](https://x)"));
+    assert!(updated.contains("## Title"));
 }
 
 #[test]
@@ -650,7 +651,7 @@ fn sanitize_html_fragments_preserves_code_spans_and_fences() {
 
 #[test]
 fn sanitize_html_fragments_leaves_malformed_fragments_unchanged() {
-    let markdown = "before <table><tr><td>broken after";
+    let markdown = "before <div><p>broken after";
 
     let updated = sanitize_html(markdown);
 
@@ -658,13 +659,16 @@ fn sanitize_html_fragments_leaves_malformed_fragments_unchanged() {
 }
 
 #[test]
-fn sanitize_html_fragments_keeps_nested_table_content_in_order() {
-    let markdown = "A <table><tr><td>1 <img src='x.png' alt='inside'/></td></tr></table> B <img src='y.png' alt='outside'/>";
+fn sanitize_html_fragments_keeps_nested_html_content_in_order() {
+    let markdown = "A <div>1 <span>2 <img src='x.png' alt='inside'/></span></div> B <img src='y.png' alt='outside'/>";
 
     let updated = sanitize_html(markdown);
 
-    assert!(!updated.contains("<table"));
+    assert!(!updated.contains("<div"));
+    assert!(!updated.contains("<span"));
     assert!(!updated.contains("<img"));
+    assert!(updated.contains("1"));
+    assert!(updated.contains("2"));
     assert!(updated.contains("![inside](x.png)"));
     assert!(updated.contains("![outside](y.png)"));
     assert!(updated.starts_with("A "));
@@ -672,14 +676,34 @@ fn sanitize_html_fragments_keeps_nested_table_content_in_order() {
 }
 
 #[test]
-fn process_pdf_sanitizes_html_output() {
-    let markdown = "start <table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table> end <img src='https://x/a.png' alt='OCR图片'/>";
+fn sanitize_html_fragments_preserves_markdown_around_html() {
+    let markdown = "before **bold** <p>text <em>ok</em></p> after";
 
     let updated = sanitize_html(markdown);
 
-    assert!(!updated.contains("<table"));
-    assert!(!updated.contains("<img"));
-    assert!(updated.contains("![OCR图片](https://x/a.png)"));
+    assert!(updated.contains("**bold**"));
+    assert!(updated.contains("text"));
+    assert!(updated.contains("*ok*"));
+    assert!(updated.starts_with("before "));
+    assert!(updated.ends_with(" after"));
+}
+
+#[test]
+fn sanitize_html_fragments_keeps_math_sensitive_html_raw() {
+    let markdown = "before <p>$K_{\\mathrm{TC\\_FP}}$</p> after";
+
+    let updated = sanitize_html(markdown);
+
+    assert_eq!(updated, markdown);
+}
+
+#[test]
+fn sanitize_html_fragments_keeps_excluded_math_tags_raw() {
+    let markdown = "before <div><sub>x</sub> + <sup>2</sup> <math>y</math></div> after";
+
+    let updated = sanitize_html(markdown);
+
+    assert_eq!(updated, markdown);
 }
 
 #[test]
