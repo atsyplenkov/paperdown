@@ -45,8 +45,8 @@ const HTML_ALLOWLIST_TAGS: &[&str] = &[
 const HTML_EXCLUDED_TAGS: &[&str] = &["math", "sub", "sup"];
 
 const HTML_VOID_TAGS: &[&str] = &[
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-    "source", "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
 ];
 
 static MARKDOWN_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -385,16 +385,16 @@ fn find_html_region_end(text: &str, start: usize, root_tag: &str) -> Option<usiz
     let mut i = root.end;
 
     while i < text.len() {
-        if text.as_bytes().get(i) == Some(&b'<') && let Some(tag) = parse_html_tag(text, i) {
+        if text.as_bytes().get(i) == Some(&b'<')
+            && let Some(tag) = parse_html_tag(text, i)
+        {
             match tag.kind {
                 HtmlTagKind::Special => {
                     i = tag.end;
                     continue;
                 }
                 HtmlTagKind::Closing => {
-                    let Some(current) = stack.last() else {
-                        return None;
-                    };
+                    let current = stack.last()?;
                     if !current.eq_ignore_ascii_case(tag.name) {
                         return None;
                     }
@@ -442,15 +442,21 @@ fn find_html_tag_end(text: &str, start: usize) -> Option<usize> {
 }
 
 fn is_html_allowlisted(tag: &str) -> bool {
-    HTML_ALLOWLIST_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+    HTML_ALLOWLIST_TAGS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(tag))
 }
 
 fn is_html_excluded(tag: &str) -> bool {
-    HTML_EXCLUDED_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+    HTML_EXCLUDED_TAGS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(tag))
 }
 
 fn is_html_void(tag: &str) -> bool {
-    HTML_VOID_TAGS.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag))
+    HTML_VOID_TAGS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(tag))
 }
 
 fn contains_excluded_math_tags(fragment: &str) -> bool {
