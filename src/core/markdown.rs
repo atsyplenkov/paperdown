@@ -1,6 +1,10 @@
+use anyhow::Result;
+use futures::stream::{self, StreamExt};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+
+const HTML_FRAGMENT_CONCURRENCY: usize = 16;
 
 static MARKDOWN_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\((https?://[^)\s]+)\)").expect("valid markdown image URL regex")
@@ -10,10 +14,12 @@ static HTML_IMAGE_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(src\s*=\s*)(['"])(https?://[^'"]+)(['"])"#).expect("valid HTML image URL regex")
 });
 
-static HTML_IMAGE_ALT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)\s+alt(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+))?"#)
-        .expect("valid HTML image alt regex")
-});
+#[derive(Debug)]
+enum Segment {
+    Text(String),
+    Code(String),
+    Html { index: usize, raw: String },
+}
 
 pub(crate) fn replace_image_urls(markdown: &str, replacements: &HashMap<String, String>) -> String {
     let updated = MARKDOWN_IMAGE_URL_PATTERN
@@ -42,7 +48,7 @@ pub(crate) fn replace_image_urls(markdown: &str, replacements: &HashMap<String, 
         .into_owned()
 }
 
-pub(crate) fn strip_html_img_alt_attributes(markdown: &str) -> String {
+pub(crate) async fn sanitize_html_fragments(markdown: String) -> Result<String> {
     let mut out = String::with_capacity(markdown.len());
     let mut chunk_start = 0usize;
     let mut in_fence = false;
@@ -68,7 +74,7 @@ pub(crate) fn strip_html_img_alt_attributes(markdown: &str) -> String {
         }
 
         if let Some((marker, len)) = fence_start(line) {
-            out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..i]));
+            out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..i]).await?);
             out.push_str(line);
             in_fence = true;
             fence_marker = marker;
@@ -82,39 +88,130 @@ pub(crate) fn strip_html_img_alt_attributes(markdown: &str) -> String {
     }
 
     if !in_fence {
-        out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..]));
+        out.push_str(&sanitize_non_code_chunk(&markdown[chunk_start..]).await?);
     }
 
-    out
+    Ok(out)
 }
 
-fn sanitize_non_code_chunk(chunk: &str) -> String {
-    let mut out = String::with_capacity(chunk.len());
+async fn sanitize_non_code_chunk(chunk: &str) -> Result<String> {
+    let mut segments = Vec::new();
     let mut i = 0usize;
+    let mut literal_start = 0usize;
+    let mut html_count = 0usize;
 
     while i < chunk.len() {
         if let Some(run_len) = backtick_run_len(chunk, i)
             && let Some(end) = find_matching_backtick_run(chunk, i + run_len, run_len)
         {
-            out.push_str(&chunk[i..end + run_len]);
+            if literal_start < i {
+                segments.push(Segment::Text(chunk[literal_start..i].to_string()));
+            }
+            segments.push(Segment::Code(chunk[i..end + run_len].to_string()));
             i = end + run_len;
+            literal_start = i;
             continue;
         }
 
-        if starts_html_img_tag(chunk, i)
-            && let Some(tag_end) = find_html_tag_end(chunk, i)
-        {
-            out.push_str(&HTML_IMAGE_ALT_PATTERN.replace_all(&chunk[i..tag_end], ""));
+        if let Some((tag_end, fragment)) = extract_html_fragment(chunk, i) {
+            if literal_start < i {
+                segments.push(Segment::Text(chunk[literal_start..i].to_string()));
+            }
+            segments.push(Segment::Html {
+                index: html_count,
+                raw: fragment,
+            });
+            html_count += 1;
             i = tag_end;
+            literal_start = i;
             continue;
         }
 
         let ch = chunk[i..].chars().next().expect("valid char boundary");
-        out.push(ch);
         i += ch.len_utf8();
     }
 
+    if literal_start < chunk.len() {
+        segments.push(Segment::Text(chunk[literal_start..].to_string()));
+    }
+
+    if html_count == 0 {
+        return Ok(join_segments(&segments, &[]));
+    }
+
+    let html_fragments: Vec<String> = segments
+        .iter()
+        .filter_map(|segment| match segment {
+            Segment::Html { raw, .. } => Some(raw.clone()),
+            _ => None,
+        })
+        .collect();
+    let converted = convert_html_fragments(html_fragments).await;
+    Ok(join_segments(&segments, &converted))
+}
+
+fn join_segments(segments: &[Segment], converted: &[Option<String>]) -> String {
+    let mut out = String::with_capacity(
+        segments
+            .iter()
+            .map(|segment| match segment {
+                Segment::Text(text) | Segment::Code(text) => text.len(),
+                Segment::Html { raw, .. } => raw.len(),
+            })
+            .sum(),
+    );
+
+    for segment in segments {
+        match segment {
+            Segment::Text(text) | Segment::Code(text) => out.push_str(text),
+            Segment::Html { index, raw } => {
+                if let Some(Some(rewritten)) = converted.get(*index) {
+                    out.push_str(rewritten);
+                } else {
+                    out.push_str(raw);
+                }
+            }
+        }
+    }
+
     out
+}
+
+fn extract_html_fragment(text: &str, start: usize) -> Option<(usize, String)> {
+    if starts_html_tag(text, start, "table") {
+        let end = find_table_fragment_end(text, start)?;
+        return Some((end, text[start..end].to_string()));
+    }
+
+    if starts_html_tag(text, start, "img") {
+        let end = find_html_tag_end(text, start)?;
+        return Some((end, text[start..end].to_string()));
+    }
+
+    None
+}
+
+async fn convert_html_fragments(fragments: Vec<String>) -> Vec<Option<String>> {
+    let converted = stream::iter(fragments.into_iter().enumerate().map(
+        |(index, fragment)| async move {
+            let converted = html2md::rewrite_html_streaming(&fragment, true).await;
+            let converted = if converted.trim().is_empty() {
+                None
+            } else {
+                Some(converted)
+            };
+            (index, converted)
+        },
+    ))
+    .buffer_unordered(HTML_FRAGMENT_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut ordered = vec![None; converted.len()];
+    for (index, item) in converted {
+        ordered[index] = item;
+    }
+    ordered
 }
 
 fn backtick_run_len(text: &str, start: usize) -> Option<usize> {
@@ -144,20 +241,71 @@ fn find_matching_backtick_run(text: &str, start: usize, run_len: usize) -> Optio
     None
 }
 
-fn starts_html_img_tag(text: &str, start: usize) -> bool {
+fn starts_html_tag(text: &str, start: usize, tag: &str) -> bool {
     let bytes = text.as_bytes();
     if bytes.get(start) != Some(&b'<') {
         return false;
     }
 
-    let Some(prefix) = text.get(start + 1..start + 4) else {
+    let tag_start = start + 1;
+    let tag_end = tag_start + tag.len();
+    let Some(candidate) = text.get(tag_start..tag_end) else {
         return false;
     };
-    if !prefix.eq_ignore_ascii_case("img") {
+    if !candidate.eq_ignore_ascii_case(tag) {
         return false;
     }
 
-    !matches!(bytes.get(start + 4), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+    !matches!(bytes.get(tag_end), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+}
+
+fn starts_end_html_tag(text: &str, start: usize, tag: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.get(start) != Some(&b'<') || bytes.get(start + 1) != Some(&b'/') {
+        return false;
+    }
+
+    let tag_start = start + 2;
+    let tag_end = tag_start + tag.len();
+    let Some(candidate) = text.get(tag_start..tag_end) else {
+        return false;
+    };
+    if !candidate.eq_ignore_ascii_case(tag) {
+        return false;
+    }
+
+    !matches!(bytes.get(tag_end), Some(b) if b.is_ascii_alphanumeric() || *b == b'-')
+}
+
+fn find_table_fragment_end(text: &str, start: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = find_html_tag_end(text, start)?;
+
+    while i < text.len() {
+        let ch = text[i..].chars().next()?;
+        if ch == '<' {
+            if starts_html_tag(text, i, "table") {
+                let end = find_html_tag_end(text, i)?;
+                depth += 1;
+                i = end;
+                continue;
+            }
+
+            if starts_end_html_tag(text, i, "table") {
+                let end = find_html_tag_end(text, i)?;
+                depth = depth.saturating_sub(1);
+                i = end;
+                if depth == 0 {
+                    return Some(end);
+                }
+                continue;
+            }
+        }
+
+        i += ch.len_utf8();
+    }
+
+    None
 }
 
 fn find_html_tag_end(text: &str, start: usize) -> Option<usize> {

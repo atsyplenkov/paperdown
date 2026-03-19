@@ -17,7 +17,7 @@
     <br>
 </p>
 
-`paperdown` converts research papers from PDF to Markdown using Z.AI's [GLM-OCR](https://github.com/zai-org/GLM-OCR) model and downloads referenced figure assets locally.
+`paperdown` converts research papers from PDF to Markdown using Z.AI's [GLM-OCR](https://github.com/zai-org/GLM-OCR) model, rewrites HTML tables and images into Markdown, and downloads referenced figure assets locally.
 
 If you work with academic papers, you know that the OCR process itself is not the most difficult part. The real challenge is cleaning up the output. Tables can disappear, their structure can become jumbled, and formulas might be converted into meaningless text. This often means you spend more time correcting the output than working with it.
 
@@ -28,6 +28,7 @@ Therefore, this project was created because, while [`docling`](https://github.co
 ## Features
 
 - Async OCR requests and batch PDF processing using the Z.AI API.
+- Async HTML table and image cleanup using `fast_html2md`.
 - Concurrent figure downloads for each PDF.
 - Fast processing: approximately 25 seconds per batch of 32 PDFs. Speed depends on the z.ai API availability. See the cost section for more details on spending.
 
