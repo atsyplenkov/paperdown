@@ -1,6 +1,6 @@
 [package]
 name = "paperdown"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Anatoly Tsyplenkov <atsyplenkov@fastmail.com>"]
 edition = "2024"
 description = "A fast CLI tool to batch convert PDFs into Markdown using GLM-OCR."
@@ -33,6 +33,7 @@ futures = "0.3"
 indicatif = "0.17"
 dotenvy = "0.15"
 regex = "1"
+fast_html2md = "0.0.58"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

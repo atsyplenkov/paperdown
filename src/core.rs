@@ -82,7 +82,7 @@ pub async fn process_pdf(
         )
         .await?;
     let figure_seconds = figure_started.elapsed();
-    let markdown = markdown::strip_html_img_alt_attributes(&markdown);
+    let markdown = markdown::sanitize_html_fragments(markdown).await?;
 
     fire(
         &progress,
@@ -220,8 +220,8 @@ pub mod testing {
         super::markdown::replace_image_urls(markdown, replacements)
     }
 
-    pub fn strip_html_img_alt_attributes(markdown: &str) -> String {
-        super::markdown::strip_html_img_alt_attributes(markdown)
+    pub async fn sanitize_html_fragments(markdown: String) -> Result<String> {
+        super::markdown::sanitize_html_fragments(markdown).await
     }
 
     pub fn prepare_output_paths(

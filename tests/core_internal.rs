@@ -7,7 +7,7 @@ use paperdown::core::testing::{
     ProgressCallback, ProgressEvent, append_log, atomic_write_text, build_payload,
     content_type_to_suffix, extract_image_url, fire_for_test, is_http_url, load_api_key,
     prepare_output_paths, process_pdf, replace_image_urls, round3_for_test,
-    strip_html_img_alt_attributes, url_suffix, validate_layout_response,
+    sanitize_html_fragments, url_suffix, validate_layout_response,
 };
 #[cfg(feature = "net-tests")]
 use paperdown::core::testing::{download_figure, localize_figures};
@@ -608,64 +608,78 @@ fn replace_image_urls_no_replacements_passthrough() {
     assert_eq!(updated, markdown);
 }
 
-#[test]
-fn strip_html_img_alt_attributes_removes_alt_and_preserves_other_attrs() {
-    let markdown = "before <img src='x.png' alt='OCR图片' data-id='1'/> after";
-
-    let updated = strip_html_img_alt_attributes(markdown);
-
-    assert_eq!(updated, "before <img src='x.png' data-id='1'/> after");
+fn sanitize_html(markdown: &str) -> String {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(sanitize_html_fragments(markdown.to_string()))
+        .unwrap()
 }
 
 #[test]
-fn strip_html_img_alt_attributes_handles_case_and_spacing() {
-    let markdown = "<IMG\n  SRC=\"x.png\"\n  ALT=\"OCR图片\"\n  title='keep me'>";
+fn sanitize_html_fragments_smoke() {
+    let markdown = "before <img src='x.png' alt='OCR图片'/> after";
 
-    let updated = strip_html_img_alt_attributes(markdown);
+    let updated = sanitize_html(markdown);
 
-    assert_eq!(updated, "<IMG\n  SRC=\"x.png\"\n  title='keep me'>");
+    assert_eq!(updated, "before ![OCR图片](x.png) after");
 }
 
 #[test]
-fn strip_html_img_alt_attributes_leaves_markdown_and_code_unchanged() {
-    let markdown = "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<img src='y.png' alt='OCR图片'/>`";
+fn sanitize_html_fragments_converts_tables_and_images() {
+    let markdown = "start <table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table> end <img src='https://x/a.png' alt='OCR图片'/>";
 
-    let updated = strip_html_img_alt_attributes(markdown);
+    let updated = sanitize_html(markdown);
+
+    assert!(!updated.contains("<table"));
+    assert!(!updated.contains("<img"));
+    assert!(updated.contains("|"));
+    assert!(updated.contains("B"));
+    assert!(updated.contains("![OCR图片](https://x/a.png)"));
+}
+
+#[test]
+fn sanitize_html_fragments_preserves_code_spans_and_fences() {
+    let markdown = "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<table><tr><td>x</td></tr></table>`";
+
+    let updated = sanitize_html(markdown);
 
     assert_eq!(
         updated,
-        "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<img src='y.png' alt='OCR图片'/>`"
+        "![OCR图片](https://x/a.png)\n```html\n<img src='x.png' alt='OCR图片'/>\n```\n`<table><tr><td>x</td></tr></table>`"
     );
 }
 
 #[test]
-fn strip_html_img_alt_attributes_removes_multiple_alt_attributes() {
-    let markdown = "<img alt='one' src='x.png' ALT=\"two\"/>";
+fn sanitize_html_fragments_leaves_malformed_fragments_unchanged() {
+    let markdown = "before <table><tr><td>broken after";
 
-    let updated = strip_html_img_alt_attributes(markdown);
+    let updated = sanitize_html(markdown);
 
-    assert_eq!(updated, "<img src='x.png'/>");
+    assert_eq!(updated, markdown);
 }
 
 #[test]
-fn strip_html_img_alt_attributes_removes_boolean_and_unquoted_alt() {
-    let markdown = "<img alt src='x.png' alt=x data-id='1'>";
+fn sanitize_html_fragments_keeps_nested_table_content_in_order() {
+    let markdown = "A <table><tr><td>1 <img src='x.png' alt='inside'/></td></tr></table> B <img src='y.png' alt='outside'/>";
 
-    let updated = strip_html_img_alt_attributes(markdown);
+    let updated = sanitize_html(markdown);
 
-    assert_eq!(updated, "<img src='x.png' data-id='1'>");
+    assert!(!updated.contains("<table"));
+    assert!(!updated.contains("<img"));
+    assert!(updated.contains("![inside](x.png)"));
+    assert!(updated.contains("![outside](y.png)"));
+    assert!(updated.starts_with("A "));
+    assert!(updated.ends_with("![outside](y.png)"));
 }
 
 #[test]
-fn strip_html_img_alt_attributes_keeps_localized_image_urls() {
-    let markdown = "<img src='https://x/a.png' alt='OCR图片'/>";
-    let mut replacements = HashMap::new();
-    replacements.insert("https://x/a.png".to_string(), "figures/a.png".to_string());
+fn process_pdf_sanitizes_html_output() {
+    let markdown = "start <table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table> end <img src='https://x/a.png' alt='OCR图片'/>";
 
-    let localized = replace_image_urls(markdown, &replacements);
-    let updated = strip_html_img_alt_attributes(&localized);
+    let updated = sanitize_html(markdown);
 
-    assert_eq!(updated, "<img src='figures/a.png'/>");
+    assert!(!updated.contains("<table"));
+    assert!(!updated.contains("<img"));
+    assert!(updated.contains("![OCR图片](https://x/a.png)"));
 }
 
 #[test]
