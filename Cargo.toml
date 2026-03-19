@@ -1,6 +1,6 @@
 [package]
 name = "paperdown"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Anatoly Tsyplenkov <atsyplenkov@fastmail.com>"]
 edition = "2024"
 description = "A fast CLI tool to batch convert PDFs into Markdown using GLM-OCR."
