@@ -17,7 +17,7 @@
     <br>
 </p>
 
-`paperdown` converts research papers from PDF to Markdown using Z.AI's [GLM-OCR](https://github.com/zai-org/GLM-OCR) model, rewrites HTML tables and images into Markdown, and downloads referenced figure assets locally.
+`paperdown` converts research papers from PDF to Markdown using Z.AI's [GLM-OCR](https://github.com/zai-org/GLM-OCR) model, rewrites HTML tables and images into CommonMark Markdown, and downloads referenced figure assets locally.
 
 If you work with academic papers, you know that the OCR process itself is not the most difficult part. The real challenge is cleaning up the output. Tables can disappear, their structure can become jumbled, and formulas might be converted into meaningless text. This often means you spend more time correcting the output than working with it.
 
