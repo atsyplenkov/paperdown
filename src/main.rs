@@ -4,7 +4,9 @@ use anyhow::Result;
 use clap::Parser;
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use paperdown::core::{self, PdfSummary, ProgressCallback, ProgressEvent, collect_pdfs};
+use paperdown::core::{
+    self, PdfSummary, ProcessPdfOptions, ProgressCallback, ProgressEvent, collect_pdfs,
+};
 use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
@@ -42,11 +44,13 @@ async fn run() -> Result<i32> {
             &pdfs[0],
             &args.output,
             &args.env_file,
-            Duration::from_secs(args.timeout),
-            args.max_download_bytes,
-            args.overwrite,
-            args.normalize_tables,
-            progress_callback(&pdfs[0], progress.clone()),
+            ProcessPdfOptions {
+                timeout: Duration::from_secs(args.timeout),
+                max_download_bytes: args.max_download_bytes,
+                overwrite: args.overwrite,
+                normalize_tables: args.normalize_tables,
+                progress: progress_callback(&pdfs[0], progress.clone()),
+            },
         )
         .await?;
         print_single_summary_stdout(&summary);
@@ -61,24 +65,17 @@ async fn run() -> Result<i32> {
         let permit_pool = semaphore.clone();
         let output = args.output.clone();
         let env_file = args.env_file.clone();
-        let timeout = Duration::from_secs(args.timeout);
-        let max_download_bytes = args.max_download_bytes;
-        let overwrite = args.overwrite;
-        let normalize_tables = args.normalize_tables;
         let progress = progress.clone();
+        let options = ProcessPdfOptions {
+            timeout: Duration::from_secs(args.timeout),
+            max_download_bytes: args.max_download_bytes,
+            overwrite: args.overwrite,
+            normalize_tables: args.normalize_tables,
+            progress: progress_callback(&pdf, progress),
+        };
         async move {
             let _permit = permit_pool.acquire_owned().await.expect("semaphore");
-            let res = core::process_pdf(
-                &pdf,
-                &output,
-                &env_file,
-                timeout,
-                max_download_bytes,
-                overwrite,
-                normalize_tables,
-                progress_callback(&pdf, progress),
-            )
-            .await;
+            let res = core::process_pdf(&pdf, &output, &env_file, options).await;
             (pdf, res)
         }
     }))

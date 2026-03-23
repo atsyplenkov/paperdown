@@ -4,10 +4,10 @@
 use httpmock::prelude::*;
 use paperdown::core::collect_pdfs;
 use paperdown::core::testing::{
-    ProgressCallback, ProgressEvent, append_log, atomic_write_text, build_payload,
-    content_type_to_suffix, extract_image_url, fire_for_test, is_http_url, load_api_key,
-    normalize_tables, prepare_output_paths, process_pdf, replace_image_urls, round3_for_test,
-    strip_html_img_alt_attributes, url_suffix, validate_layout_response,
+    ProcessPdfOptions, ProgressCallback, ProgressEvent, append_log, atomic_write_text,
+    build_payload, content_type_to_suffix, extract_image_url, fire_for_test, is_http_url,
+    load_api_key, normalize_tables, prepare_output_paths, process_pdf, replace_image_urls,
+    round3_for_test, strip_html_img_alt_attributes, url_suffix, validate_layout_response,
 };
 #[cfg(feature = "net-tests")]
 use paperdown::core::testing::{download_figure, localize_figures};
@@ -947,11 +947,13 @@ fn process_pdf_checks_output_conflict_before_env_lookup() {
             &pdf,
             &output_root,
             &missing_env,
-            Duration::from_secs(1),
-            1024,
-            false,
-            false,
-            None,
+            ProcessPdfOptions {
+                timeout: Duration::from_secs(1),
+                max_download_bytes: 1024,
+                overwrite: false,
+                normalize_tables: false,
+                progress: None,
+            },
         ))
         .unwrap_err()
         .to_string();

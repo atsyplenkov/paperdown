@@ -30,6 +30,15 @@ pub enum ProgressEvent {
 
 pub type ProgressCallback = Arc<dyn Fn(ProgressEvent) + Send + Sync>;
 
+#[derive(Clone)]
+pub struct ProcessPdfOptions {
+    pub timeout: Duration,
+    pub max_download_bytes: u64,
+    pub overwrite: bool,
+    pub normalize_tables: bool,
+    pub progress: Option<ProgressCallback>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct PdfSummary {
     pub pdf: String,
@@ -46,11 +55,7 @@ pub async fn process_pdf(
     pdf_path: &Path,
     output_root: &Path,
     env_file: &Path,
-    timeout: Duration,
-    max_download_bytes: u64,
-    overwrite: bool,
-    normalize_tables: bool,
-    progress: Option<ProgressCallback>,
+    options: ProcessPdfOptions,
 ) -> Result<PdfSummary> {
     let run_started = Instant::now();
     let pdf_path = pdf_path
@@ -59,17 +64,23 @@ pub async fn process_pdf(
     if !pdf_path.is_file() || !input::is_pdf_path(&pdf_path) {
         return Err(anyhow!("Input must be a PDF: {}", pdf_path.display()));
     }
-    let prepared =
-        output::prepare_output_paths(output_root, &pdf_path, overwrite, normalize_tables)?;
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
+    let prepared = output::prepare_output_paths(
+        output_root,
+        &pdf_path,
+        options.overwrite,
+        options.normalize_tables,
+    )?;
+    let client = reqwest::Client::builder()
+        .timeout(options.timeout)
+        .build()?;
 
     let api_key = input::load_api_key(env_file)?;
     let payload = ocr::build_payload(&pdf_path).await?;
-    fire(&progress, ProgressEvent::OcrStarted);
+    fire(&options.progress, ProgressEvent::OcrStarted);
     let ocr_started = Instant::now();
     let response = ocr::call_layout_parsing(&client, &api_key, payload).await?;
     let ocr_seconds = ocr_started.elapsed();
-    fire(&progress, ProgressEvent::OcrFinished);
+    fire(&options.progress, ProgressEvent::OcrFinished);
 
     let (markdown, layout_details, usage) = ocr::validate_layout_response(response)?;
 
@@ -80,13 +91,13 @@ pub async fn process_pdf(
             &layout_details,
             &client,
             &prepared.figures_dir,
-            max_download_bytes,
-            progress.clone(),
+            options.max_download_bytes,
+            options.progress.clone(),
         )
         .await?;
     let figure_seconds = figure_started.elapsed();
     let markdown = markdown::strip_html_img_alt_attributes(&markdown);
-    let (markdown, table_stats) = if normalize_tables {
+    let (markdown, table_stats) = if options.normalize_tables {
         let tables_dir = prepared
             .tables_dir
             .as_ref()
@@ -97,14 +108,14 @@ pub async fn process_pdf(
     };
 
     fire(
-        &progress,
+        &options.progress,
         ProgressEvent::MarkdownWriteStarted {
             bytes: markdown.len(),
         },
     );
     let write_started = Instant::now();
     output::atomic_write_text(&prepared.markdown_path, &markdown).await?;
-    fire(&progress, ProgressEvent::MarkdownWriteFinished);
+    fire(&options.progress, ProgressEvent::MarkdownWriteFinished);
 
     output::append_log(
         &prepared.log_path,
@@ -161,6 +172,7 @@ fn round3(duration: Duration) -> f64 {
 #[cfg(feature = "internal-testing")]
 #[doc(hidden)]
 pub mod testing {
+    pub use super::ProcessPdfOptions;
     pub use super::ProgressCallback;
     pub use super::ProgressEvent;
     pub use super::process_pdf;

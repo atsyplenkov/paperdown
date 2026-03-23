@@ -192,19 +192,14 @@ fn render_normalized_table(
 
     let mut out = String::new();
     write!(&mut out, "\n\n##### OCR Table {ordinal}\n").unwrap();
-    write!(&mut out, "Source (OCR HTML): {artifact_rel}\n").unwrap();
+    writeln!(&mut out, "Source (OCR HTML): {artifact_rel}").unwrap();
     write!(&mut out, "Columns: {}\n\n", parsed.columns.join(", ")).unwrap();
 
     for (row_index, row) in parsed.rows.iter().enumerate() {
         if row_index > 0 && row_index % ROW_GROUP_SIZE == 0 {
             out.push('\n');
         }
-        write!(
-            &mut out,
-            "Row: {}\n",
-            render_row_json(&parsed.columns, row)?
-        )
-        .unwrap();
+        writeln!(&mut out, "Row: {}", render_row_json(&parsed.columns, row)?).unwrap();
     }
     out.push('\n');
 
@@ -275,11 +270,8 @@ fn build_columns(grid: &[Vec<Option<String>>], header_rows: usize) -> Vec<String
 
     for col in 0..width {
         let mut parts = Vec::new();
-        for row in 0..header_rows.min(grid.len()) {
-            let value = grid[row][col]
-                .as_ref()
-                .map(|value| value.trim())
-                .unwrap_or("");
+        for row in grid.iter().take(header_rows.min(grid.len())) {
+            let value = row[col].as_ref().map(|value| value.trim()).unwrap_or("");
             if value.is_empty() {
                 continue;
             }
@@ -396,7 +388,7 @@ fn ensure_row(
     }
 }
 
-fn resize_width(grid: &mut Vec<Vec<Option<String>>>, occupied: &mut Vec<Vec<bool>>, width: usize) {
+fn resize_width(grid: &mut [Vec<Option<String>>], occupied: &mut [Vec<bool>], width: usize) {
     for row in grid.iter_mut() {
         if row.len() < width {
             row.resize(width, None);
@@ -489,9 +481,8 @@ fn html_fragment_to_text(fragment: &str) -> String {
             if let Some(tag_end) = find_tag_end(fragment, pos) {
                 let tag = fragment[pos + 1..tag_end - 1].trim();
                 let lower = tag.to_ascii_lowercase();
-                if lower.starts_with("br") {
-                    out.push('\n');
-                } else if lower.starts_with("/p")
+                if lower.starts_with("br")
+                    || lower.starts_with("/p")
                     || lower.starts_with("/div")
                     || lower.starts_with("/tr")
                     || lower.starts_with("/td")
