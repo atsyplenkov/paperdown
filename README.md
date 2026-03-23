@@ -23,7 +23,7 @@ If you work with academic papers, you know that the OCR process itself is not th
 
 I used to rely on [`marker`](https://github.com/datalab-to/marker) for PDF parsing and thought it was great. However, after converting the [Batista et al. (2022)](https://hess.copernicus.org/articles/26/3753/2022/) article one day, I discovered that Table 4 was missing, regardless of the settings or LLMs I used (via the `--use-llm` flag). I then switched to [`docling`](https://github.com/docling-project/docling), and Table 4 reappeared, but all the formulas were gone. Furthermore, both tools require a GPU, and even on a Google Colab T4 instance, processing one article takes 4 to 5 minutes.
 
-Therefore, this project was created because, while [`docling`](https://github.com/docling-project/docling) and [`marker`](https://github.com/datalab-to/marker) are both good tools, they can sometimes miss tables or mix up table structures in ways that require manual correction. I wanted a simple, reliable process that produces a single Markdown file I can trust, a local `figures/` folder, and the ability to process my entire library quickly on my laptop.
+Therefore, this project was created because, while [`docling`](https://github.com/docling-project/docling) and [`marker`](https://github.com/datalab-to/marker) are both good tools, they can sometimes miss tables or mix up table structures in ways that require manual correction. I wanted a simple, reliable process that produces a Markdown index file I can trust, local `figures/` and optional `tables/` folders, and the ability to process my entire library quickly on my laptop.
 
 ## Features
 
@@ -71,6 +71,7 @@ paperdown converts one PDF or a directory of PDFs into markdown output folders.
 For each PDF, it creates:
 - <output>/<pdf_stem>/index.md
 - <output>/<pdf_stem>/figures/
+- <output>/<pdf_stem>/tables/ (when `--normalize-tables` is enabled)
 - <output>/<pdf_stem>/log.jsonl
 
 API key lookup order:
@@ -87,7 +88,8 @@ Options:
       --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file. [default: 20971520]
       --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode. [default: 32]
   -v, --verbose                                  Enable verbose progress messages on stderr.
-      --overwrite                                Replace existing managed output artifacts (index.md and figures/).
+      --overwrite                                Replace existing managed output artifacts (index.md, figures/, and tables/ when enabled).
+      --normalize-tables                         Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
   -h, --help                                     Print help (see a summary with '-h')
   -V, --version                                  Print version
 ```

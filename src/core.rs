@@ -12,6 +12,7 @@ mod input;
 mod markdown;
 mod ocr;
 mod output;
+mod table_normalization;
 
 pub fn collect_pdfs(input_path: &Path) -> Result<Vec<std::path::PathBuf>> {
     input::collect_pdfs(input_path)
@@ -48,6 +49,7 @@ pub async fn process_pdf(
     timeout: Duration,
     max_download_bytes: u64,
     overwrite: bool,
+    normalize_tables: bool,
     progress: Option<ProgressCallback>,
 ) -> Result<PdfSummary> {
     let run_started = Instant::now();
@@ -57,7 +59,8 @@ pub async fn process_pdf(
     if !pdf_path.is_file() || !input::is_pdf_path(&pdf_path) {
         return Err(anyhow!("Input must be a PDF: {}", pdf_path.display()));
     }
-    let prepared = output::prepare_output_paths(output_root, &pdf_path, overwrite)?;
+    let prepared =
+        output::prepare_output_paths(output_root, &pdf_path, overwrite, normalize_tables)?;
     let client = reqwest::Client::builder().timeout(timeout).build()?;
 
     let api_key = input::load_api_key(env_file)?;
@@ -83,6 +86,15 @@ pub async fn process_pdf(
         .await?;
     let figure_seconds = figure_started.elapsed();
     let markdown = markdown::strip_html_img_alt_attributes(&markdown);
+    let (markdown, table_stats) = if normalize_tables {
+        let tables_dir = prepared
+            .tables_dir
+            .as_ref()
+            .expect("tables_dir must exist when normalize_tables is enabled");
+        table_normalization::normalize_tables(&markdown, tables_dir).await?
+    } else {
+        (markdown, table_normalization::TableStats::default())
+    };
 
     fire(
         &progress,
@@ -104,6 +116,14 @@ pub async fn process_pdf(
             "downloaded_figures": downloaded_figures,
             "remote_figure_links": remote_figure_links,
             "image_blocks": image_blocks,
+            "tables_found": table_stats.tables_found,
+            "tables_raw_written": table_stats.tables_raw_written,
+            "tables_normalized": table_stats.tables_normalized,
+            "tables_skipped_in_code": table_stats.tables_skipped_in_code,
+            "tables_skipped_nested": table_stats.tables_skipped_nested,
+            "tables_skipped_too_large": table_stats.tables_skipped_too_large,
+            "tables_failed_extract": table_stats.tables_failed_extract,
+            "tables_failed_parse": table_stats.tables_failed_parse,
             "usage": usage,
             "timing": {
                 "ocr_call_s": round3(ocr_seconds),
@@ -122,6 +142,7 @@ pub async fn process_pdf(
         downloaded_figures,
         remote_figure_links,
         image_blocks,
+        // Table stats are logged but not surfaced in the summary.
         usage,
         log_path: prepared.log_path.display().to_string(),
     })
@@ -143,6 +164,7 @@ pub mod testing {
     pub use super::ProgressCallback;
     pub use super::ProgressEvent;
     pub use super::process_pdf;
+    pub use super::table_normalization::TableStats;
     use anyhow::Result;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -153,6 +175,7 @@ pub mod testing {
     pub struct PreparedOutputPaths {
         pub output_dir: std::path::PathBuf,
         pub figures_dir: std::path::PathBuf,
+        pub tables_dir: Option<std::path::PathBuf>,
         pub markdown_path: std::path::PathBuf,
         pub log_path: std::path::PathBuf,
     }
@@ -228,14 +251,28 @@ pub mod testing {
         output_root: &Path,
         pdf_path: &Path,
         overwrite: bool,
+        normalize_tables: bool,
     ) -> Result<PreparedOutputPaths> {
-        let prepared = super::output::prepare_output_paths(output_root, pdf_path, overwrite)?;
+        let prepared = super::output::prepare_output_paths(
+            output_root,
+            pdf_path,
+            overwrite,
+            normalize_tables,
+        )?;
         Ok(PreparedOutputPaths {
             output_dir: prepared.output_dir,
             figures_dir: prepared.figures_dir,
+            tables_dir: prepared.tables_dir,
             markdown_path: prepared.markdown_path,
             log_path: prepared.log_path,
         })
+    }
+
+    pub async fn normalize_tables(
+        markdown: &str,
+        tables_dir: &Path,
+    ) -> Result<(String, TableStats)> {
+        super::table_normalization::normalize_tables(markdown, tables_dir).await
     }
 
     pub async fn append_log(log_path: &Path, entry: Value) -> Result<()> {

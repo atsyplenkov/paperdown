@@ -6,7 +6,7 @@ use paperdown::core::collect_pdfs;
 use paperdown::core::testing::{
     ProgressCallback, ProgressEvent, append_log, atomic_write_text, build_payload,
     content_type_to_suffix, extract_image_url, fire_for_test, is_http_url, load_api_key,
-    prepare_output_paths, process_pdf, replace_image_urls, round3_for_test,
+    normalize_tables, prepare_output_paths, process_pdf, replace_image_urls, round3_for_test,
     strip_html_img_alt_attributes, url_suffix, validate_layout_response,
 };
 #[cfg(feature = "net-tests")]
@@ -318,6 +318,101 @@ fn fire_invokes_callback_when_present() {
 #[test]
 fn round3_rounds_millis() {
     assert_eq!(round3_for_test(Duration::from_millis(1234)), 1.234);
+}
+
+#[test]
+fn normalize_tables_rewrites_table_and_writes_artifact() {
+    let tmp = TempDir::new().unwrap();
+    let markdown = "before\n<table>\n<tr><th>Sample Name</th><th>Value</th></tr>\n<tr><td>Alpha</td><td>1</td></tr>\n</table>\nafter";
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, stats) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+
+    assert!(updated.contains("##### OCR Table 1"));
+    assert!(updated.contains("Source (OCR HTML): tables/table_001.html"));
+    assert!(updated.contains("Columns: sample_name, value"));
+    assert!(updated.contains(r#"Row: {"sample_name":"Alpha","value":"1"}"#));
+    assert!(tmp.path().join("table_001.html").exists());
+    assert_eq!(stats.tables_found, 1);
+    assert_eq!(stats.tables_raw_written, 1);
+    assert_eq!(stats.tables_normalized, 1);
+}
+
+#[test]
+fn normalize_tables_skips_fenced_and_inline_code() {
+    let tmp = TempDir::new().unwrap();
+    let markdown = "start `<table><tr><td>inline</td></tr></table>`\n```html\n<table><tr><td>fenced</td></tr></table>\n```\n<table><tr><td>real</td></tr></table>\nend";
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, stats) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+
+    assert!(updated.contains("<table><tr><td>inline</td></tr></table>"));
+    assert!(updated.contains("```html"));
+    assert!(updated.contains("##### OCR Table 1"));
+    assert_eq!(stats.tables_found, 1);
+    assert_eq!(stats.tables_skipped_in_code, 2);
+    assert_eq!(stats.tables_normalized, 1);
+}
+
+#[test]
+fn normalize_tables_expands_rowspan_and_colspan() {
+    let tmp = TempDir::new().unwrap();
+    let markdown = "<table>\n<tr><th rowspan=\"2\">Category</th><th colspan=\"2\">Measure</th></tr>\n<tr><th>Mean</th><th>Max</th></tr>\n<tr><td rowspan=\"2\">A</td><td>1</td><td>2</td></tr>\n<tr><td>3</td><td>4</td></tr>\n</table>";
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, _) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+
+    assert!(updated.contains("Columns: category, measure_mean, measure_max"));
+    assert!(updated.contains(r#"Row: {"category":"A","measure_mean":"1","measure_max":"2"}"#));
+    assert!(updated.contains(r#"Row: {"category":"A","measure_mean":"3","measure_max":"4"}"#));
+}
+
+#[test]
+fn normalize_tables_preserves_json_escaping() {
+    let tmp = TempDir::new().unwrap();
+    let markdown = "<table><tr><th>Value</th></tr><tr><td>a;=b\n\"c\"\\d</td></tr></table>";
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, _) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+
+    let row_line = updated
+        .lines()
+        .find(|line| line.starts_with("Row: "))
+        .expect("row line");
+    let row_json = row_line.trim_start_matches("Row: ");
+    let parsed: Value = serde_json::from_str(row_json).unwrap();
+    assert_eq!(parsed["value"], "a;=b\n\"c\"\\d");
+}
+
+#[test]
+fn normalize_tables_leaves_unclosed_table_intact() {
+    let tmp = TempDir::new().unwrap();
+    let markdown = "before\n<table><tr><td>broken";
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, stats) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+
+    assert_eq!(updated, markdown);
+    assert_eq!(stats.tables_found, 1);
+    assert_eq!(stats.tables_failed_extract, 1);
+}
+
+#[test]
+fn normalize_tables_uses_placeholder_for_oversized_table() {
+    let tmp = TempDir::new().unwrap();
+    let cells = (0..2001).map(|_| "<td>x</td>").collect::<String>();
+    let markdown = format!("<table><tr>{cells}</tr></table>");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, stats) = rt
+        .block_on(normalize_tables(&markdown, tmp.path()))
+        .unwrap();
+
+    assert!(updated.contains("normalization skipped (table too large)"));
+    assert!(tmp.path().join("table_001.html").exists());
+    assert_eq!(stats.tables_found, 1);
+    assert_eq!(stats.tables_raw_written, 1);
+    assert_eq!(stats.tables_skipped_too_large, 1);
 }
 
 #[cfg(feature = "net-tests")]
@@ -677,7 +772,7 @@ fn prepare_output_without_overwrite_fails_on_existing_managed_artifacts() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false)
+    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("--overwrite"));
@@ -691,7 +786,7 @@ fn prepare_output_without_overwrite_fails_when_only_figures_exists() {
     let target = tmp.path().join("out").join("paper");
     std::fs::create_dir_all(target.join("figures")).unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false)
+    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("figures"));
@@ -707,7 +802,7 @@ fn prepare_output_without_overwrite_fails_when_both_exist() {
     std::fs::create_dir_all(target.join("figures")).unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false)
+    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("index.md"));
@@ -727,7 +822,7 @@ fn prepare_output_with_overwrite_preserves_unrelated_files() {
     std::fs::write(figures.join("stale.png"), b"old").unwrap();
     std::fs::write(out.join("keep.txt"), b"keep").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
     assert!(prepared.figures_dir.exists());
     assert!(!prepared.figures_dir.join("stale.png").exists());
     assert!(out.join("keep.txt").exists());
@@ -742,8 +837,41 @@ fn prepare_output_with_overwrite_handles_figures_file() {
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("figures"), b"stale").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
     assert!(prepared.figures_dir.is_dir());
+}
+
+#[test]
+fn prepare_output_with_normalize_tables_manages_tables_dir() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+    let out = tmp.path().join("out").join("paper");
+    std::fs::create_dir_all(out.join("tables")).unwrap();
+    std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
+
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, true).unwrap();
+    assert!(prepared.tables_dir.as_ref().unwrap().is_dir());
+    assert!(
+        !prepared
+            .tables_dir
+            .as_ref()
+            .unwrap()
+            .join("stale.html")
+            .exists()
+    );
+}
+
+#[test]
+fn prepare_output_without_overwrite_ignores_stale_tables_when_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+    let out = tmp.path().join("out").join("paper");
+    std::fs::create_dir_all(out.join("tables")).unwrap();
+
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    assert!(prepared.tables_dir.is_none());
 }
 
 #[test]
@@ -821,6 +949,7 @@ fn process_pdf_checks_output_conflict_before_env_lookup() {
             &missing_env,
             Duration::from_secs(1),
             1024,
+            false,
             false,
             None,
         ))

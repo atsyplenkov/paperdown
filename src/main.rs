@@ -45,6 +45,7 @@ async fn run() -> Result<i32> {
             Duration::from_secs(args.timeout),
             args.max_download_bytes,
             args.overwrite,
+            args.normalize_tables,
             progress_callback(&pdfs[0], progress.clone()),
         )
         .await?;
@@ -63,6 +64,7 @@ async fn run() -> Result<i32> {
         let timeout = Duration::from_secs(args.timeout);
         let max_download_bytes = args.max_download_bytes;
         let overwrite = args.overwrite;
+        let normalize_tables = args.normalize_tables;
         let progress = progress.clone();
         async move {
             let _permit = permit_pool.acquire_owned().await.expect("semaphore");
@@ -73,6 +75,7 @@ async fn run() -> Result<i32> {
                 timeout,
                 max_download_bytes,
                 overwrite,
+                normalize_tables,
                 progress_callback(&pdf, progress),
             )
             .await;
