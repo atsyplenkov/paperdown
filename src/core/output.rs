@@ -9,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 pub(crate) struct PreparedOutput {
     pub(crate) output_dir: PathBuf,
     pub(crate) figures_dir: PathBuf,
+    pub(crate) tables_dir: Option<PathBuf>,
     pub(crate) markdown_path: PathBuf,
     pub(crate) log_path: PathBuf,
 }
@@ -17,6 +18,7 @@ pub(crate) fn prepare_output_paths(
     output_root: &Path,
     pdf_path: &Path,
     overwrite: bool,
+    normalize_tables: bool,
 ) -> Result<PreparedOutput> {
     let stem = pdf_path
         .file_stem()
@@ -28,6 +30,7 @@ pub(crate) fn prepare_output_paths(
 
     let markdown_path = output_dir.join("index.md");
     let figures_dir = output_dir.join("figures");
+    let tables_dir = output_dir.join("tables");
     let log_path = output_dir.join("log.jsonl");
 
     if !overwrite {
@@ -43,6 +46,12 @@ pub(crate) fn prepare_output_paths(
                 figures_dir.display()
             ));
         }
+        if normalize_tables && tables_dir.exists() {
+            return Err(anyhow::anyhow!(
+                "Output already exists: {}. Re-run with --overwrite",
+                tables_dir.display()
+            ));
+        }
     } else {
         if markdown_path.exists() {
             std::fs::remove_file(&markdown_path)?;
@@ -54,13 +63,27 @@ pub(crate) fn prepare_output_paths(
                 std::fs::remove_file(&figures_dir)?;
             }
         }
+        if normalize_tables && tables_dir.exists() {
+            if tables_dir.is_dir() {
+                std::fs::remove_dir_all(&tables_dir)?;
+            } else {
+                std::fs::remove_file(&tables_dir)?;
+            }
+        }
     }
 
     std::fs::create_dir_all(&figures_dir)?;
+    let tables_dir = if normalize_tables {
+        std::fs::create_dir_all(&tables_dir)?;
+        Some(tables_dir)
+    } else {
+        None
+    };
 
     Ok(PreparedOutput {
         output_dir,
         figures_dir,
+        tables_dir,
         markdown_path,
         log_path,
     })

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 For each PDF, it creates:\n\
 - <output>/<pdf_stem>/index.md\n\
 - <output>/<pdf_stem>/figures/\n\
+- <output>/<pdf_stem>/tables/ (when --normalize-tables is enabled)\n\
 - <output>/<pdf_stem>/log.jsonl\n\n\
 API key lookup order:\n\
 1) ZAI_API_KEY from --env-file\n\
@@ -17,9 +18,11 @@ API key lookup order:\n\
     after_help = "Examples:\n  \
 paperdown --input pdf/paper.pdf\n  \
 paperdown --input pdf/ --output md/ --workers 4\n  \
-paperdown --input pdf/ --output md/ --overwrite\n\n\
+paperdown --input pdf/ --output md/ --overwrite\n  \
+paperdown --input pdf/ --output md/ --normalize-tables\n\n\
 Notes:\n  \
 Without --overwrite, existing index.md or figures/ causes a failure.\n  \
+When --normalize-tables is enabled, existing tables/ also causes a failure.\n  \
 Progress bars are shown on stderr only when running in a TTY."
 )]
 pub struct Cli {
@@ -83,6 +86,13 @@ pub struct Cli {
         help = "Replace existing managed output artifacts (index.md and figures/)."
     )]
     pub overwrite: bool,
+
+    #[arg(
+        long = "normalize-tables",
+        action = ArgAction::SetTrue,
+        help = "Normalize OCR HTML tables into Markdown and store raw HTML under tables/."
+    )]
+    pub normalize_tables: bool,
 }
 
 pub fn default_workers() -> usize {
@@ -124,6 +134,7 @@ mod tests {
         assert_eq!(cli.workers, default_workers());
         assert!(!cli.verbose);
         assert!(!cli.overwrite);
+        assert!(!cli.normalize_tables);
     }
 
     #[test]
@@ -148,6 +159,7 @@ mod tests {
         let help = cmd.render_long_help().to_string();
         assert!(help.contains("Examples:"));
         assert!(help.contains("--overwrite"));
+        assert!(help.contains("--normalize-tables"));
         let file_first = help.find("1) ZAI_API_KEY from --env-file");
         let env_second = help.find("2) ZAI_API_KEY from environment");
         assert!(file_first.is_some());
