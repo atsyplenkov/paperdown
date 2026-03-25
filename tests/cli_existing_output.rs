@@ -47,6 +47,7 @@ fn batch_existing_outputs_fail_before_env_or_ocr() {
     assert!(stderr.contains("a.pdf"));
     assert!(stderr.contains("b.pdf"));
     assert!(stderr.contains("Re-run with --overwrite"));
+    assert!(stderr.contains("OCR concurrency:"));
 
     assert!(!stderr.contains("ZAI_API_KEY"));
     assert!(!stdout.contains("\u{1b}["));

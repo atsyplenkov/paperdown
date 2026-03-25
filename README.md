@@ -29,7 +29,7 @@ Therefore, this project was created because, while [`docling`](https://github.co
 
 - Async OCR requests and batch PDF processing using the Z.AI API.
 - Concurrent figure downloads for each PDF.
-- Fast processing: approximately 25 seconds per batch of 32 PDFs. Speed depends on the z.ai API availability. See the cost section for more details on spending.
+- Fast processing with separate controls for total pipeline concurrency and OCR API concurrency.
 
 > [!note]
 > This tool was designed to be used with academic papers written in English. Parsing other PDFs, heavy in tables or figures, or in other languages rather than English has not been tested.
@@ -45,8 +45,10 @@ paperdown --input path/to/paper.pdf
 My preferred method is batch directory processing:
 
 ```bash
-paperdown --input pdf/ --output md/ --workers 4 --overwrite
+paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 ```
+
+`--workers` controls how many PDFs are processed concurrently in batch mode. `--ocr-workers` controls concurrent OCR API calls. Effective OCR concurrency is `min(--workers, --ocr-workers)`.
 
 ## Installation
 
@@ -87,6 +89,7 @@ Options:
       --timeout <TIMEOUT>                        HTTP timeout in seconds for OCR requests and figure downloads. [default: 180]
       --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file. [default: 20971520]
       --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode. [default: 32]
+      --ocr-workers <OCR_WORKERS>                Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers). [default: 2]
   -v, --verbose                                  Enable verbose progress messages on stderr.
       --overwrite                                Replace existing managed output artifacts (index.md, figures/, and tables/ when enabled).
       --normalize-tables                         Normalize OCR HTML tables into Markdown and store raw HTML under tables/.

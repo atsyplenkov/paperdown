@@ -56,7 +56,9 @@ fn cli_batch_reports_failed_count() {
             "--env-file",
             env_file.to_str().unwrap(),
             "--workers",
-            "2",
+            "1",
+            "--ocr-workers",
+            "5",
         ])
         .output()
         .unwrap();
@@ -66,4 +68,5 @@ fn cli_batch_reports_failed_count() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("Batch Complete processed: 0 failed: 2 figures: 0"));
     assert!(stderr.contains("failed:"));
+    assert!(stderr.contains("OCR concurrency: 1"));
 }

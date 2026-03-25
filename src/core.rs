@@ -1,11 +1,13 @@
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use tokio::sync::Semaphore;
 
 mod assets;
 mod input;
@@ -57,6 +59,17 @@ pub async fn process_pdf(
     env_file: &Path,
     options: ProcessPdfOptions,
 ) -> Result<PdfSummary> {
+    process_pdf_with_ocr_limiter(pdf_path, output_root, env_file, options, None).await
+}
+
+#[doc(hidden)]
+pub async fn process_pdf_with_ocr_limiter(
+    pdf_path: &Path,
+    output_root: &Path,
+    env_file: &Path,
+    options: ProcessPdfOptions,
+    ocr_limiter: Option<Arc<Semaphore>>,
+) -> Result<PdfSummary> {
     let run_started = Instant::now();
     let pdf_path = pdf_path
         .canonicalize()
@@ -78,7 +91,10 @@ pub async fn process_pdf(
     let payload = ocr::build_payload(&pdf_path).await?;
     fire(&options.progress, ProgressEvent::OcrStarted);
     let ocr_started = Instant::now();
-    let response = ocr::call_layout_parsing(&client, &api_key, payload).await?;
+    let response = run_with_ocr_limiter(ocr_limiter, async {
+        ocr::call_layout_parsing(&client, &api_key, payload).await
+    })
+    .await?;
     let ocr_seconds = ocr_started.elapsed();
     fire(&options.progress, ProgressEvent::OcrFinished);
 
@@ -167,6 +183,71 @@ fn fire(progress: &Option<ProgressCallback>, event: ProgressEvent) {
 
 fn round3(duration: Duration) -> f64 {
     ((duration.as_secs_f64() * 1000.0).round()) / 1000.0
+}
+
+async fn run_with_ocr_limiter<T, F>(limiter: Option<Arc<Semaphore>>, future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    if let Some(limiter) = limiter {
+        let _permit = limiter
+            .acquire_owned()
+            .await
+            .context("OCR limiter closed unexpectedly")?;
+        future.await
+    } else {
+        future.await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::time::{Duration, sleep};
+
+    #[test]
+    fn run_with_ocr_limiter_caps_parallelism() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let limiter = Arc::new(Semaphore::new(2));
+            let active = Arc::new(AtomicUsize::new(0));
+            let peak = Arc::new(AtomicUsize::new(0));
+
+            let mut tasks = Vec::new();
+            for _ in 0..8 {
+                let limiter = Some(limiter.clone());
+                let active = active.clone();
+                let peak = peak.clone();
+                tasks.push(tokio::spawn(async move {
+                    run_with_ocr_limiter(limiter, async {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        loop {
+                            let seen = peak.load(Ordering::SeqCst);
+                            if current <= seen {
+                                break;
+                            }
+                            if peak
+                                .compare_exchange(seen, current, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        sleep(Duration::from_millis(30)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<(), anyhow::Error>(())
+                    })
+                    .await
+                }));
+            }
+
+            for task in tasks {
+                task.await.expect("join").expect("task result");
+            }
+            assert!(peak.load(Ordering::SeqCst) <= 2);
+        });
+    }
 }
 
 #[cfg(feature = "internal-testing")]

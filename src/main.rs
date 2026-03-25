@@ -58,11 +58,19 @@ async fn run() -> Result<i32> {
     }
 
     let workers = args.workers.min(pdfs.len()).max(1);
-    eprintln!("Processing {} PDFs with {} workers...", pdfs.len(), workers);
+    let ocr_workers = effective_ocr_workers(workers, args.ocr_workers);
+    eprintln!(
+        "Processing {} PDFs with {} workers (OCR concurrency: {})...",
+        pdfs.len(),
+        workers,
+        ocr_workers
+    );
 
     let semaphore = Arc::new(Semaphore::new(workers));
+    let ocr_semaphore = Arc::new(Semaphore::new(ocr_workers));
     let results = stream::iter(pdfs.into_iter().map(|pdf| {
         let permit_pool = semaphore.clone();
+        let ocr_limiter = ocr_semaphore.clone();
         let output = args.output.clone();
         let env_file = args.env_file.clone();
         let progress = progress.clone();
@@ -75,7 +83,14 @@ async fn run() -> Result<i32> {
         };
         async move {
             let _permit = permit_pool.acquire_owned().await.expect("semaphore");
-            let res = core::process_pdf(&pdf, &output, &env_file, options).await;
+            let res = core::process_pdf_with_ocr_limiter(
+                &pdf,
+                &output,
+                &env_file,
+                options,
+                Some(ocr_limiter),
+            )
+            .await;
             (pdf, res)
         }
     }))
@@ -109,6 +124,10 @@ async fn run() -> Result<i32> {
 
 fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
+}
+
+fn effective_ocr_workers(workers: usize, ocr_workers: usize) -> usize {
+    workers.min(ocr_workers).max(1)
 }
 
 fn format_error_for_stderr(message: &str) -> String {
@@ -298,5 +317,12 @@ mod tests {
         callback(ProgressEvent::FigureScanStarted { total: 2 });
         callback(ProgressEvent::FigureDownloadFinished);
         callback(ProgressEvent::FigureDownloadFinished);
+    }
+
+    #[test]
+    fn effective_ocr_workers_caps_to_total_workers() {
+        assert_eq!(effective_ocr_workers(32, 2), 2);
+        assert_eq!(effective_ocr_workers(8, 32), 8);
+        assert_eq!(effective_ocr_workers(1, 2), 1);
     }
 }
