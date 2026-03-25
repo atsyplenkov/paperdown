@@ -17,6 +17,7 @@ Possible sections are:
 
 ### Fixed:
 - avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance ([#7](https://github.com/atsyplenkov/paperdown/issues/7))
+- align skip and output-reuse behavior with marker-based semantics: skip only when `<output>/<pdf_stem>/log.jsonl` exists; otherwise refresh managed artifacts and continue processing ([#11](https://github.com/atsyplenkov/paperdown/issues/11))
 
 ## [0.2.0] - 2026-03-18
 

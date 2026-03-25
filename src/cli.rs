@@ -21,8 +21,9 @@ paperdown --input pdf/ --output md/ --workers 4\n  \
 paperdown --input pdf/ --output md/ --overwrite\n  \
 paperdown --input pdf/ --output md/ --normalize-tables\n\n\
 Notes:\n  \
-Without --overwrite, existing index.md or figures/ causes a failure.\n  \
-When --normalize-tables is enabled, existing tables/ also causes a failure.\n  \
+Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF.\n  \
+If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled).\n  \
+With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.\n  \
 Progress bars are shown on stderr only when running in a TTY."
 )]
 pub struct Cli {
@@ -91,7 +92,7 @@ pub struct Cli {
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Replace existing managed output artifacts (index.md and figures/)."
+        help = "Replace the whole <output>/<pdf_stem>/ folder before processing."
     )]
     pub overwrite: bool,
 
@@ -168,6 +169,15 @@ mod tests {
         assert!(help.contains("Examples:"));
         assert!(help.contains("--overwrite"));
         assert!(help.contains("--normalize-tables"));
+        assert!(help.contains(
+            "Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF."
+        ));
+        assert!(help.contains(
+            "If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled)."
+        ));
+        assert!(
+            help.contains("With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.")
+        );
         let file_first = help.find("1) ZAI_API_KEY from --env-file");
         let env_second = help.find("2) ZAI_API_KEY from environment");
         assert!(file_first.is_some());

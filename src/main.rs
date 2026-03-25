@@ -37,6 +37,10 @@ async fn run() -> Result<i32> {
     };
 
     if pdfs.len() == 1 {
+        if !args.overwrite && has_existing_log_marker(&args.output, &pdfs[0]) {
+            print_single_skip_summary_stdout(&pdfs[0]);
+            return Ok(0);
+        }
         if args.verbose {
             eprintln!("Processing 1 PDF: {}", pdfs[0].display());
         }
@@ -57,18 +61,40 @@ async fn run() -> Result<i32> {
         return Ok(0);
     }
 
-    let workers = args.workers.min(pdfs.len()).max(1);
+    let total_inputs = pdfs.len();
+    let mut skipped_count = 0usize;
+    let mut process_pdfs = Vec::new();
+    for pdf in pdfs {
+        if !args.overwrite && has_existing_log_marker(&args.output, &pdf) {
+            skipped_count += 1;
+        } else {
+            process_pdfs.push(pdf);
+        }
+    }
+
+    if process_pdfs.is_empty() {
+        let counts = batch_accounting(total_inputs, 0, skipped_count, 0, 0);
+        print_batch_summary_stdout(
+            counts.processed,
+            counts.skipped,
+            counts.failed,
+            counts.figures,
+        );
+        return Ok(0);
+    }
+
+    let workers = args.workers.min(process_pdfs.len()).max(1);
     let ocr_workers = effective_ocr_workers(workers, args.ocr_workers);
     eprintln!(
         "Processing {} PDFs with {} workers (OCR concurrency: {})...",
-        pdfs.len(),
+        process_pdfs.len(),
         workers,
         ocr_workers
     );
 
     let semaphore = Arc::new(Semaphore::new(workers));
     let ocr_semaphore = Arc::new(Semaphore::new(ocr_workers));
-    let results = stream::iter(pdfs.into_iter().map(|pdf| {
+    let results = stream::iter(process_pdfs.into_iter().map(|pdf| {
         let permit_pool = semaphore.clone();
         let ocr_limiter = ocr_semaphore.clone();
         let output = args.output.clone();
@@ -118,8 +144,20 @@ async fn run() -> Result<i32> {
         }
     }
 
-    print_batch_summary_stdout(success_count, failed_count, downloaded_figures);
-    Ok(if failed_count > 0 { 1 } else { 0 })
+    let counts = batch_accounting(
+        total_inputs,
+        success_count,
+        skipped_count,
+        failed_count,
+        downloaded_figures,
+    );
+    print_batch_summary_stdout(
+        counts.processed,
+        counts.skipped,
+        counts.failed,
+        counts.figures,
+    );
+    Ok(if counts.failed > 0 { 1 } else { 0 })
 }
 
 fn stderr_is_tty() -> bool {
@@ -139,6 +177,21 @@ fn format_error_for_stderr(message: &str) -> String {
 
 fn stdout_is_tty() -> bool {
     std::io::stdout().is_terminal()
+}
+
+fn has_existing_log_marker(output_root: &Path, pdf: &Path) -> bool {
+    let Some(stem) = pdf.file_stem() else {
+        return false;
+    };
+    output_root.join(stem).join("log.jsonl").is_file()
+}
+
+fn print_single_skip_summary_stdout(pdf: &Path) {
+    if stdout_is_tty() {
+        println!("\x1b[1;33mSkipped\x1b[0m {}", display_path(pdf));
+    } else {
+        println!("Skipped {}", display_path(pdf));
+    }
 }
 
 fn print_single_summary_stdout(summary: &PdfSummary) {
@@ -165,7 +218,35 @@ fn print_single_summary_stdout(summary: &PdfSummary) {
     }
 }
 
-fn print_batch_summary_stdout(processed: usize, failed: usize, figures: usize) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BatchAccounting {
+    processed: usize,
+    skipped: usize,
+    failed: usize,
+    figures: usize,
+}
+
+fn batch_accounting(
+    total_inputs: usize,
+    processed: usize,
+    skipped: usize,
+    failed: usize,
+    figures: usize,
+) -> BatchAccounting {
+    assert_eq!(
+        processed + skipped + failed,
+        total_inputs,
+        "batch accounting invariant violated"
+    );
+    BatchAccounting {
+        processed,
+        skipped,
+        failed,
+        figures,
+    }
+}
+
+fn print_batch_summary_stdout(processed: usize, skipped: usize, failed: usize, figures: usize) {
     if stdout_is_tty() {
         let color = if failed == 0 {
             "\x1b[1;32m"
@@ -173,10 +254,12 @@ fn print_batch_summary_stdout(processed: usize, failed: usize, figures: usize) {
             "\x1b[1;33m"
         };
         println!(
-            "{color}Batch Complete\x1b[0m processed: \x1b[1m{processed}\x1b[0m failed: \x1b[1m{failed}\x1b[0m figures: \x1b[1m{figures}\x1b[0m"
+            "{color}Batch Complete\x1b[0m processed: \x1b[1m{processed}\x1b[0m skipped: \x1b[1m{skipped}\x1b[0m failed: \x1b[1m{failed}\x1b[0m figures: \x1b[1m{figures}\x1b[0m"
         );
     } else {
-        println!("Batch Complete processed: {processed} failed: {failed} figures: {figures}");
+        println!(
+            "Batch Complete processed: {processed} skipped: {skipped} failed: {failed} figures: {figures}"
+        );
     }
 }
 
@@ -298,7 +381,8 @@ mod tests {
             log_path: "/tmp/out/paper/log.jsonl".to_string(),
         };
         print_single_summary_stdout(&summary);
-        print_batch_summary_stdout(2, 1, 4);
+        print_single_skip_summary_stdout(Path::new(&summary.pdf));
+        print_batch_summary_stdout(2, 1, 1, 4);
     }
 
     #[test]
@@ -324,5 +408,50 @@ mod tests {
         assert_eq!(effective_ocr_workers(32, 2), 2);
         assert_eq!(effective_ocr_workers(8, 32), 8);
         assert_eq!(effective_ocr_workers(1, 2), 1);
+    }
+
+    #[test]
+    fn has_existing_log_marker_returns_true_when_log_file_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output_root = temp.path();
+        let pdf = temp.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("create pdf");
+        let log_path = output_root.join("paper").join("log.jsonl");
+        std::fs::create_dir_all(log_path.parent().expect("log parent")).expect("create log dir");
+        std::fs::write(&log_path, b"{}\n").expect("write log marker");
+
+        assert!(has_existing_log_marker(output_root, &pdf));
+    }
+
+    #[test]
+    fn has_existing_log_marker_returns_false_when_log_file_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output_root = temp.path();
+        let pdf = temp.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("create pdf");
+
+        assert!(!has_existing_log_marker(output_root, &pdf));
+    }
+
+    mod main {
+        use super::*;
+
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn batch_accounting_mixed_outcomes_is_consistent() {
+                let counts = batch_accounting(5, 2, 1, 2, 7);
+                assert_eq!(
+                    counts,
+                    BatchAccounting {
+                        processed: 2,
+                        skipped: 1,
+                        failed: 2,
+                        figures: 7
+                    }
+                );
+            }
+        }
     }
 }

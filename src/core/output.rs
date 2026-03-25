@@ -14,6 +14,28 @@ pub(crate) struct PreparedOutput {
     pub(crate) log_path: PathBuf,
 }
 
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            } else {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}
+
+fn validate_output_stem(stem: &str) -> Result<()> {
+    if stem.is_empty() || stem == "." || stem == ".." || stem.contains('/') || stem.contains('\\') {
+        return Err(anyhow::anyhow!("Invalid output stem: {stem}"));
+    }
+    Ok(())
+}
+
 pub(crate) fn prepare_output_paths(
     output_root: &Path,
     pdf_path: &Path,
@@ -24,8 +46,12 @@ pub(crate) fn prepare_output_paths(
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow::anyhow!("Invalid PDF filename: {}", pdf_path.display()))?;
+    validate_output_stem(stem)?;
 
     let output_dir = output_root.join(stem);
+    if overwrite {
+        remove_path_if_exists(&output_dir)?;
+    }
     std::fs::create_dir_all(&output_dir)?;
 
     let markdown_path = output_dir.join("index.md");
@@ -34,41 +60,16 @@ pub(crate) fn prepare_output_paths(
     let log_path = output_dir.join("log.jsonl");
 
     if !overwrite {
-        if markdown_path.exists() {
+        if log_path.is_file() {
             return Err(anyhow::anyhow!(
                 "Output already exists: {}. Re-run with --overwrite",
-                markdown_path.display()
+                log_path.display()
             ));
         }
-        if figures_dir.exists() {
-            return Err(anyhow::anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                figures_dir.display()
-            ));
-        }
-        if normalize_tables && tables_dir.exists() {
-            return Err(anyhow::anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                tables_dir.display()
-            ));
-        }
-    } else {
-        if markdown_path.exists() {
-            std::fs::remove_file(&markdown_path)?;
-        }
-        if figures_dir.exists() {
-            if figures_dir.is_dir() {
-                std::fs::remove_dir_all(&figures_dir)?;
-            } else {
-                std::fs::remove_file(&figures_dir)?;
-            }
-        }
-        if normalize_tables && tables_dir.exists() {
-            if tables_dir.is_dir() {
-                std::fs::remove_dir_all(&tables_dir)?;
-            } else {
-                std::fs::remove_file(&tables_dir)?;
-            }
+        remove_path_if_exists(&markdown_path)?;
+        remove_path_if_exists(&figures_dir)?;
+        if normalize_tables {
+            remove_path_if_exists(&tables_dir)?;
         }
     }
 
@@ -124,4 +125,26 @@ pub(crate) async fn atomic_write_bytes(path: &Path, content: &[u8]) -> Result<()
     drop(temp_file);
     fs::rename(&temp_path, path).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_output_stem;
+
+    #[test]
+    fn validate_output_stem_rejects_backslash() {
+        let err = validate_output_stem("a\\b").unwrap_err().to_string();
+        assert!(err.contains("Invalid output stem"));
+    }
+
+    #[test]
+    fn validate_output_stem_rejects_forward_slash() {
+        let err = validate_output_stem("a/b").unwrap_err().to_string();
+        assert!(err.contains("Invalid output stem"));
+    }
+
+    #[test]
+    fn validate_output_stem_accepts_normal_stem() {
+        assert!(validate_output_stem("paper").is_ok());
+    }
 }

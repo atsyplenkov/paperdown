@@ -50,6 +50,8 @@ paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 
 `--workers` controls how many PDFs are processed concurrently in batch mode. `--ocr-workers` controls concurrent OCR API calls. Effective OCR concurrency is `min(--workers, --ocr-workers)`.
 
+Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. If the log marker is missing, `paperdown` treats the PDF as unprocessed and refreshes managed artifacts (`index.md`, `figures/`, and `tables/` when `--normalize-tables` is enabled). With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
+
 ## Installation
 
 Install from crates.io:
@@ -91,7 +93,7 @@ Options:
       --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode. [default: 32]
       --ocr-workers <OCR_WORKERS>                Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers). [default: 2]
   -v, --verbose                                  Enable verbose progress messages on stderr.
-      --overwrite                                Replace existing managed output artifacts (index.md, figures/, and tables/ when enabled).
+      --overwrite                                Replace the whole <output>/<pdf_stem>/ folder before processing.
       --normalize-tables                         Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
   -h, --help                                     Print help (see a summary with '-h')
   -V, --version                                  Print version
