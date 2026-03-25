@@ -15,12 +15,7 @@ pub(crate) struct PreparedOutput {
 }
 
 fn validate_output_stem(stem: &str) -> Result<()> {
-    if stem.is_empty()
-        || stem == "."
-        || stem == ".."
-        || stem.contains('/')
-        || stem.contains('\\')
-    {
+    if stem.is_empty() || stem == "." || stem == ".." || stem.contains('/') || stem.contains('\\') {
         return Err(anyhow::anyhow!("Invalid output stem: {stem}"));
     }
     Ok(())

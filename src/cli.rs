@@ -179,9 +179,9 @@ mod tests {
         assert!(help.contains(
             "When skip is not applied, existing managed artifacts can still trigger a conflict error; rerun with --overwrite to replace the folder."
         ));
-        assert!(help.contains(
-            "With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced."
-        ));
+        assert!(
+            help.contains("With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.")
+        );
         let file_first = help.find("1) ZAI_API_KEY from --env-file");
         let env_second = help.find("2) ZAI_API_KEY from environment");
         assert!(file_first.is_some());

@@ -201,7 +201,17 @@ fn has_existing_log_marker(output_root: &Path, pdf: &Path) -> bool {
         return true;
     };
 
-    pdf_path == pdf.display().to_string()
+    let current_pdf = match pdf.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return pdf_path == pdf.display().to_string(),
+    };
+
+    let marker_pdf = Path::new(pdf_path);
+    if let Ok(marker_canonical) = marker_pdf.canonicalize() {
+        return marker_canonical == current_pdf;
+    }
+
+    pdf_path == current_pdf.display().to_string()
 }
 
 fn print_single_skip_summary_stdout(pdf: &Path) {
@@ -442,6 +452,34 @@ mod tests {
         .expect("write log marker");
 
         assert!(!has_existing_log_marker(output_root, pdf));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn has_existing_log_marker_treats_symlink_and_real_path_as_same_file() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let real_dir = temp.path().join("real");
+        let link_dir = temp.path().join("link");
+        std::fs::create_dir_all(&real_dir).expect("create real dir");
+        std::fs::create_dir_all(&link_dir).expect("create link dir");
+
+        let real_pdf = real_dir.join("paper.pdf");
+        std::fs::write(&real_pdf, b"%PDF-1.4").expect("create real pdf");
+        let symlink_pdf = link_dir.join("paper.pdf");
+        symlink(&real_pdf, &symlink_pdf).expect("create symlink");
+
+        let output_root = temp.path().join("output");
+        let log_path = output_root.join("paper").join("log.jsonl");
+        std::fs::create_dir_all(log_path.parent().expect("log parent")).expect("create log dir");
+        std::fs::write(
+            &log_path,
+            format!("{{\"pdf_path\":\"{}\"}}\n", real_pdf.display()),
+        )
+        .expect("write log marker");
+
+        assert!(has_existing_log_marker(&output_root, &symlink_pdf));
     }
 
     mod main {

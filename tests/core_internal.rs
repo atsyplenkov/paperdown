@@ -908,7 +908,6 @@ fn prepare_output_rejects_unsafe_stems() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("Invalid output stem"));
-
 }
 
 #[test]
