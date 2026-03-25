@@ -22,8 +22,17 @@ pub(crate) async fn call_layout_parsing(
     api_key: &str,
     payload: Value,
 ) -> Result<Value> {
+    call_layout_parsing_at_url(client, api_key, payload, API_URL).await
+}
+
+pub(crate) async fn call_layout_parsing_at_url(
+    client: &reqwest::Client,
+    api_key: &str,
+    payload: Value,
+    api_url: &str,
+) -> Result<Value> {
     let response = client
-        .post(API_URL)
+        .post(api_url)
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&payload)
         .send()
@@ -33,6 +42,11 @@ pub(crate) async fn call_layout_parsing(
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
+        if status.as_u16() == 429 {
+            return Err(anyhow!(
+                "Z.AI OCR rate limit (HTTP 429). Lower --ocr-workers (e.g. 1) or reduce concurrent jobs sharing this API key."
+            ));
+        }
         return Err(anyhow!(
             "Z.AI OCR request failed with HTTP {}: {}",
             status.as_u16(),
@@ -63,4 +77,52 @@ pub(crate) fn validate_layout_response(data: Value) -> Result<(String, Vec<Value
 
     let usage = data.get("usage").filter(|v| v.is_object()).cloned();
     Ok((markdown, layout_details, usage))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn call_layout_parsing_429_returns_actionable_error() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("local addr");
+
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let mut read_buf = [0u8; 4096];
+                let _ = stream.read(&mut read_buf).await.expect("read request");
+                let body = r#"{"error":{"code":"1302","message":"Rate limit reached for requests"}}"#;
+                let response = format!(
+                    "HTTP/1.1 429 Too Many Requests\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            });
+
+            let client = reqwest::Client::new();
+            let err = call_layout_parsing_at_url(
+                &client,
+                "test-key",
+                json!({"model": "glm-ocr", "file": "data:application/pdf;base64,AA=="}),
+                &format!("http://{addr}"),
+            )
+            .await
+            .expect_err("expected 429 error")
+            .to_string();
+
+            server.await.expect("server done");
+            assert!(err.contains("Z.AI OCR rate limit (HTTP 429)"));
+            assert!(err.contains("--ocr-workers"));
+        });
+    }
 }
