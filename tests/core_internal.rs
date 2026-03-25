@@ -764,7 +764,7 @@ fn strip_html_img_alt_attributes_keeps_localized_image_urls() {
 }
 
 #[test]
-fn prepare_output_without_overwrite_fails_on_existing_managed_artifacts() {
+fn prepare_output_without_overwrite_replaces_existing_index_when_log_missing() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -772,41 +772,59 @@ fn prepare_output_without_overwrite_fails_on_existing_managed_artifacts() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("--overwrite"));
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    assert_eq!(prepared.markdown_path, target.join("index.md"));
+    assert!(!prepared.markdown_path.exists());
+    assert!(prepared.figures_dir.is_dir());
 }
 
 #[test]
-fn prepare_output_without_overwrite_fails_when_only_figures_exists() {
+fn prepare_output_without_overwrite_cleans_stale_figures_when_log_missing() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
     let target = tmp.path().join("out").join("paper");
     std::fs::create_dir_all(target.join("figures")).unwrap();
+    std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("figures"));
-    assert!(err.contains("--overwrite"));
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    assert!(prepared.figures_dir.is_dir());
+    assert!(!prepared.figures_dir.join("stale.png").exists());
 }
 
 #[test]
-fn prepare_output_without_overwrite_fails_when_both_exist() {
+fn prepare_output_without_overwrite_cleans_index_and_figures_when_log_missing() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
     let target = tmp.path().join("out").join("paper");
     std::fs::create_dir_all(target.join("figures")).unwrap();
+    std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    assert!(!prepared.markdown_path.exists());
+    assert!(!prepared.figures_dir.join("stale.png").exists());
+}
+
+#[test]
+fn prepare_output_without_overwrite_preserves_completed_output_when_log_exists() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+    let target = tmp.path().join("out").join("paper");
+    std::fs::create_dir_all(target.join("figures")).unwrap();
+    std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
+    std::fs::write(target.join("index.md"), b"old").unwrap();
+    std::fs::write(target.join("log.jsonl"), b"{}\n").unwrap();
+
     let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("index.md"));
+    assert!(err.contains("log.jsonl"));
     assert!(err.contains("--overwrite"));
+    assert!(target.join("index.md").exists());
+    assert!(target.join("figures").join("stale.png").exists());
 }
 
 #[test]
@@ -866,6 +884,27 @@ fn prepare_output_with_normalize_tables_manages_tables_dir() {
     std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, true).unwrap();
+    assert!(prepared.tables_dir.as_ref().unwrap().is_dir());
+    assert!(
+        !prepared
+            .tables_dir
+            .as_ref()
+            .unwrap()
+            .join("stale.html")
+            .exists()
+    );
+}
+
+#[test]
+fn prepare_output_without_overwrite_cleans_tables_when_enabled_and_log_missing() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+    let out = tmp.path().join("out").join("paper");
+    std::fs::create_dir_all(out.join("tables")).unwrap();
+    std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
+
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, true).unwrap();
     assert!(prepared.tables_dir.as_ref().unwrap().is_dir());
     assert!(
         !prepared
@@ -961,7 +1000,7 @@ fn load_api_key_parses_quoted_value() {
 }
 
 #[test]
-fn process_pdf_checks_output_conflict_before_env_lookup() {
+fn process_pdf_checks_log_conflict_before_env_lookup() {
     let _guard = env_lock().lock().unwrap();
     unsafe {
         std::env::remove_var("ZAI_API_KEY");
@@ -974,7 +1013,7 @@ fn process_pdf_checks_output_conflict_before_env_lookup() {
     let output_root = tmp.path().join("out");
     let output_dir = output_root.join("paper");
     std::fs::create_dir_all(&output_dir).unwrap();
-    std::fs::write(output_dir.join("index.md"), b"existing").unwrap();
+    std::fs::write(output_dir.join("log.jsonl"), b"{}\n").unwrap();
 
     let missing_env = tmp.path().join("missing.env");
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -996,4 +1035,43 @@ fn process_pdf_checks_output_conflict_before_env_lookup() {
 
     assert!(err.contains("Re-run with --overwrite"));
     assert!(!err.contains("ZAI_API_KEY"));
+}
+
+#[test]
+fn process_pdf_reaches_env_lookup_when_log_missing_despite_stale_outputs() {
+    let _guard = env_lock().lock().unwrap();
+    unsafe {
+        std::env::remove_var("ZAI_API_KEY");
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+
+    let output_root = tmp.path().join("out");
+    let output_dir = output_root.join("paper");
+    std::fs::create_dir_all(output_dir.join("figures")).unwrap();
+    std::fs::write(output_dir.join("index.md"), b"existing").unwrap();
+    std::fs::write(output_dir.join("figures").join("stale.png"), b"old").unwrap();
+
+    let missing_env = tmp.path().join("missing.env");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt
+        .block_on(process_pdf(
+            &pdf,
+            &output_root,
+            &missing_env,
+            ProcessPdfOptions {
+                timeout: Duration::from_secs(1),
+                max_download_bytes: 1024,
+                overwrite: false,
+                normalize_tables: false,
+                progress: None,
+            },
+        ))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("ZAI_API_KEY"));
+    assert!(!err.contains("Re-run with --overwrite"));
 }

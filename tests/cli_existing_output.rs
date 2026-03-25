@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use std::fs;
 
 #[test]
-fn batch_existing_outputs_fail_before_env_or_ocr() {
+fn batch_without_log_marker_reaches_env_lookup_even_with_stale_outputs() {
     let temp = tempfile::tempdir().expect("tempdir");
     let pdf_dir = temp.path().join("pdf");
     let out_dir = temp.path().join("md");
@@ -17,6 +17,10 @@ fn batch_existing_outputs_fail_before_env_or_ocr() {
     fs::create_dir_all(out_dir.join("b")).expect("out b");
     fs::write(out_dir.join("a/index.md"), b"old").expect("index a");
     fs::write(out_dir.join("b/index.md"), b"old").expect("index b");
+    fs::create_dir_all(out_dir.join("a/figures")).expect("figures a");
+    fs::create_dir_all(out_dir.join("b/figures")).expect("figures b");
+    fs::write(out_dir.join("a/figures/stale.png"), b"old").expect("stale fig a");
+    fs::write(out_dir.join("b/figures/stale.png"), b"old").expect("stale fig b");
 
     let missing_env = temp.path().join("missing.env");
 
@@ -46,10 +50,10 @@ fn batch_existing_outputs_fail_before_env_or_ocr() {
     assert!(stderr.contains("failed:"));
     assert!(stderr.contains("a.pdf"));
     assert!(stderr.contains("b.pdf"));
-    assert!(stderr.contains("Re-run with --overwrite"));
     assert!(stderr.contains("OCR concurrency:"));
 
-    assert!(!stderr.contains("ZAI_API_KEY"));
+    assert!(stderr.contains("ZAI_API_KEY"));
+    assert!(!stderr.contains("Re-run with --overwrite"));
     assert!(!stdout.contains("\u{1b}["));
     assert!(!stderr.contains("\u{1b}["));
 }

@@ -14,6 +14,21 @@ pub(crate) struct PreparedOutput {
     pub(crate) log_path: PathBuf,
 }
 
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            } else {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}
+
 fn validate_output_stem(stem: &str) -> Result<()> {
     if stem.is_empty() || stem == "." || stem == ".." || stem.contains('/') || stem.contains('\\') {
         return Err(anyhow::anyhow!("Invalid output stem: {stem}"));
@@ -35,17 +50,7 @@ pub(crate) fn prepare_output_paths(
 
     let output_dir = output_root.join(stem);
     if overwrite {
-        match std::fs::symlink_metadata(&output_dir) {
-            Ok(metadata) => {
-                if metadata.is_dir() {
-                    std::fs::remove_dir_all(&output_dir)?;
-                } else {
-                    std::fs::remove_file(&output_dir)?;
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
-        }
+        remove_path_if_exists(&output_dir)?;
     }
     std::fs::create_dir_all(&output_dir)?;
 
@@ -55,23 +60,16 @@ pub(crate) fn prepare_output_paths(
     let log_path = output_dir.join("log.jsonl");
 
     if !overwrite {
-        if markdown_path.exists() {
+        if log_path.is_file() {
             return Err(anyhow::anyhow!(
                 "Output already exists: {}. Re-run with --overwrite",
-                markdown_path.display()
+                log_path.display()
             ));
         }
-        if figures_dir.exists() {
-            return Err(anyhow::anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                figures_dir.display()
-            ));
-        }
-        if normalize_tables && tables_dir.exists() {
-            return Err(anyhow::anyhow!(
-                "Output already exists: {}. Re-run with --overwrite",
-                tables_dir.display()
-            ));
+        remove_path_if_exists(&markdown_path)?;
+        remove_path_if_exists(&figures_dir)?;
+        if normalize_tables {
+            remove_path_if_exists(&tables_dir)?;
         }
     }
 

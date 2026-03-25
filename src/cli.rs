@@ -22,7 +22,7 @@ paperdown --input pdf/ --output md/ --overwrite\n  \
 paperdown --input pdf/ --output md/ --normalize-tables\n\n\
 Notes:\n  \
 Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF.\n  \
-If the log marker is missing, existing managed artifacts can still trigger a conflict error; rerun with --overwrite to replace the folder.\n  \
+If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled).\n  \
 With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.\n  \
 Progress bars are shown on stderr only when running in a TTY."
 )]
@@ -173,7 +173,7 @@ mod tests {
             "Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF."
         ));
         assert!(help.contains(
-            "If the log marker is missing, existing managed artifacts can still trigger a conflict error; rerun with --overwrite to replace the folder."
+            "If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled)."
         ));
         assert!(
             help.contains("With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.")
