@@ -810,7 +810,7 @@ fn prepare_output_without_overwrite_fails_when_both_exist() {
 }
 
 #[test]
-fn prepare_output_with_overwrite_preserves_unrelated_files() {
+fn prepare_output_with_overwrite_removes_unrelated_files() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -825,7 +825,22 @@ fn prepare_output_with_overwrite_preserves_unrelated_files() {
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
     assert!(prepared.figures_dir.exists());
     assert!(!prepared.figures_dir.join("stale.png").exists());
-    assert!(out.join("keep.txt").exists());
+    assert!(!out.join("keep.txt").exists());
+}
+
+#[test]
+fn prepare_output_with_overwrite_replaces_output_file_path() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+
+    let out_file = tmp.path().join("out").join("paper");
+    std::fs::create_dir_all(tmp.path().join("out")).unwrap();
+    std::fs::write(&out_file, b"stale").unwrap();
+
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
+    assert!(prepared.output_dir.is_dir());
+    assert!(prepared.figures_dir.is_dir());
 }
 
 #[test]
@@ -872,6 +887,28 @@ fn prepare_output_without_overwrite_ignores_stale_tables_when_disabled() {
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
     assert!(prepared.tables_dir.is_none());
+}
+
+#[test]
+fn prepare_output_rejects_unsafe_stems() {
+    let tmp = TempDir::new().unwrap();
+    let output_root = tmp.path().join("out");
+    std::fs::create_dir_all(&output_root).unwrap();
+
+    let dot_stem_pdf = tmp.path().join("..pdf");
+    std::fs::write(&dot_stem_pdf, b"%PDF").unwrap();
+    let err = prepare_output_paths(&output_root, &dot_stem_pdf, false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Invalid output stem"));
+
+    let dotdot_stem_pdf = tmp.path().join("...pdf");
+    std::fs::write(&dotdot_stem_pdf, b"%PDF").unwrap();
+    let err = prepare_output_paths(&output_root, &dotdot_stem_pdf, false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Invalid output stem"));
+
 }
 
 #[test]
