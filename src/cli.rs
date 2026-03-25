@@ -73,6 +73,14 @@ pub struct Cli {
     pub workers: usize,
 
     #[arg(
+        long = "ocr-workers",
+        default_value_t = 2usize,
+        value_parser = parse_positive_usize,
+        help = "Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers)."
+    )]
+    pub ocr_workers: usize,
+
+    #[arg(
         short = 'v',
         long,
         action = ArgAction::SetTrue,
@@ -96,10 +104,7 @@ pub struct Cli {
 }
 
 pub fn default_workers() -> usize {
-    let cpu = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    (cpu * 4).clamp(4, 32)
+    32
 }
 
 fn parse_positive_usize(value: &str) -> Result<usize, String> {
@@ -118,9 +123,8 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     #[test]
-    fn default_workers_formula_bounds() {
-        let workers = default_workers();
-        assert!((4..=32).contains(&workers));
+    fn default_workers_is_32() {
+        assert_eq!(default_workers(), 32);
     }
 
     #[test]
@@ -132,6 +136,7 @@ mod tests {
         assert_eq!(cli.timeout, 180);
         assert_eq!(cli.max_download_bytes, 20_971_520);
         assert_eq!(cli.workers, default_workers());
+        assert_eq!(cli.ocr_workers, 2);
         assert!(!cli.verbose);
         assert!(!cli.overwrite);
         assert!(!cli.normalize_tables);
@@ -151,6 +156,9 @@ mod tests {
             .is_err()
         );
         assert!(Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--workers", "0"]).is_err());
+        assert!(
+            Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--ocr-workers", "0"]).is_err()
+        );
     }
 
     #[test]
@@ -166,5 +174,6 @@ mod tests {
         assert!(env_second.is_some());
         assert!(file_first.unwrap() < env_second.unwrap());
         assert!(help.contains("single .pdf file or a directory"));
+        assert!(help.contains("min(--workers, --ocr-workers)"));
     }
 }
