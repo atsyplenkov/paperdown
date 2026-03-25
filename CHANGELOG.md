@@ -13,6 +13,11 @@ Possible sections are:
 
 <!-- next-header -->
 
+## [Unreleased]
+
+### Fixed:
+- avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance ([#7](https://github.com/atsyplenkov/paperdown/issues/7))
+
 ## [0.2.0] - 2026-03-18
 
 - published on crates.io
