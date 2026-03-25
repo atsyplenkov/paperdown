@@ -50,7 +50,7 @@ paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 
 `--workers` controls how many PDFs are processed concurrently in batch mode. `--ocr-workers` controls concurrent OCR API calls. Effective OCR concurrency is `min(--workers, --ocr-workers)`.
 
-Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. Exception: skip is not applied if the marker's last non-empty entry has `pdf_path` explicitly pointing to a different PDF. When skip is not applied, existing managed artifacts can still trigger a conflict error; rerun with `--overwrite` to replace the folder. With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
+Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. If the log marker is missing, existing managed artifacts can still trigger a conflict error; rerun with `--overwrite` to replace the folder. With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
 
 ## Installation
 

@@ -17,7 +17,7 @@ Possible sections are:
 
 ### Fixed:
 - avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance ([#7](https://github.com/atsyplenkov/paperdown/issues/7))
-- align CLI help and README overwrite guidance with marker-based skip behavior (existing `<output>/<pdf_stem>/log.jsonl` skips by default; skip is not applied when the last marker entry `pdf_path` explicitly points to a different PDF) and conflict recovery instructions ([#11](https://github.com/atsyplenkov/paperdown/issues/11))
+- align CLI help and README overwrite guidance with marker-based skip behavior (skip only when `<output>/<pdf_stem>/log.jsonl` exists) and conflict recovery instructions ([#11](https://github.com/atsyplenkov/paperdown/issues/11))
 
 ## [0.2.0] - 2026-03-18
 

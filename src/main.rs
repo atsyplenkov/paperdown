@@ -183,35 +183,7 @@ fn has_existing_log_marker(output_root: &Path, pdf: &Path) -> bool {
     let Some(stem) = pdf.file_stem() else {
         return false;
     };
-    let log_path = output_root.join(stem).join("log.jsonl");
-    if !log_path.is_file() {
-        return false;
-    }
-
-    let Ok(contents) = std::fs::read_to_string(&log_path) else {
-        return true;
-    };
-    let Some(last_line) = contents.lines().rev().find(|line| !line.trim().is_empty()) else {
-        return true;
-    };
-    let Ok(entry) = serde_json::from_str::<serde_json::Value>(last_line) else {
-        return true;
-    };
-    let Some(pdf_path) = entry.get("pdf_path").and_then(|value| value.as_str()) else {
-        return true;
-    };
-
-    let current_pdf = match pdf.canonicalize() {
-        Ok(path) => path,
-        Err(_) => return pdf_path == pdf.display().to_string(),
-    };
-
-    let marker_pdf = Path::new(pdf_path);
-    if let Ok(marker_canonical) = marker_pdf.canonicalize() {
-        return marker_canonical == current_pdf;
-    }
-
-    pdf_path == current_pdf.display().to_string()
+    output_root.join(stem).join("log.jsonl").is_file()
 }
 
 fn print_single_skip_summary_stdout(pdf: &Path) {
@@ -439,47 +411,26 @@ mod tests {
     }
 
     #[test]
-    fn has_existing_log_marker_returns_false_for_pdf_path_mismatch() {
+    fn has_existing_log_marker_returns_true_when_log_file_exists() {
         let temp = tempfile::tempdir().expect("tempdir");
         let output_root = temp.path();
-        let pdf = Path::new("/input/current/paper.pdf");
+        let pdf = temp.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("create pdf");
         let log_path = output_root.join("paper").join("log.jsonl");
         std::fs::create_dir_all(log_path.parent().expect("log parent")).expect("create log dir");
-        std::fs::write(
-            &log_path,
-            "{\"pdf_path\":\"/input/current/paper.pdf\"}\n\n{\"pdf_path\":\"/input/other/paper.pdf\"}\n",
-        )
-        .expect("write log marker");
+        std::fs::write(&log_path, b"{}\n").expect("write log marker");
 
-        assert!(!has_existing_log_marker(output_root, pdf));
+        assert!(has_existing_log_marker(output_root, &pdf));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn has_existing_log_marker_treats_symlink_and_real_path_as_same_file() {
-        use std::os::unix::fs::symlink;
-
+    fn has_existing_log_marker_returns_false_when_log_file_missing() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let real_dir = temp.path().join("real");
-        let link_dir = temp.path().join("link");
-        std::fs::create_dir_all(&real_dir).expect("create real dir");
-        std::fs::create_dir_all(&link_dir).expect("create link dir");
+        let output_root = temp.path();
+        let pdf = temp.path().join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("create pdf");
 
-        let real_pdf = real_dir.join("paper.pdf");
-        std::fs::write(&real_pdf, b"%PDF-1.4").expect("create real pdf");
-        let symlink_pdf = link_dir.join("paper.pdf");
-        symlink(&real_pdf, &symlink_pdf).expect("create symlink");
-
-        let output_root = temp.path().join("output");
-        let log_path = output_root.join("paper").join("log.jsonl");
-        std::fs::create_dir_all(log_path.parent().expect("log parent")).expect("create log dir");
-        std::fs::write(
-            &log_path,
-            format!("{{\"pdf_path\":\"{}\"}}\n", real_pdf.display()),
-        )
-        .expect("write log marker");
-
-        assert!(has_existing_log_marker(&output_root, &symlink_pdf));
+        assert!(!has_existing_log_marker(output_root, &pdf));
     }
 
     mod main {
