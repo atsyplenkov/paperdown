@@ -2,6 +2,7 @@ mod cli;
 mod config;
 
 use anyhow::Result;
+use clap::Parser;
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use paperdown::core::{
@@ -26,10 +27,10 @@ async fn main() {
 }
 
 async fn run() -> Result<i32> {
-    let (mut args, sources) = cli::Cli::parse_with_sources();
+    let args = cli::Cli::parse();
     let cwd = std::env::current_dir()?;
-    let file_config = config::load_effective_config(args.config.as_deref(), &cwd)?;
-    apply_config(&mut args, sources, file_config);
+    let settings =
+        config::load_effective_config(args.config.as_deref(), &cwd, args.config_overrides())?;
     let pdfs = collect_pdfs(&args.input)?;
     let progress = if stderr_is_tty() {
         Some(Arc::new(MultiProgress::with_draw_target(
@@ -40,22 +41,22 @@ async fn run() -> Result<i32> {
     };
 
     if pdfs.len() == 1 {
-        if !args.overwrite && has_existing_log_marker(&args.output, &pdfs[0]) {
+        if !settings.overwrite && has_existing_log_marker(&args.output, &pdfs[0]) {
             print_single_skip_summary_stdout(&pdfs[0]);
             return Ok(0);
         }
-        if args.verbose {
+        if settings.verbose {
             eprintln!("Processing 1 PDF: {}", pdfs[0].display());
         }
         let summary = core::process_pdf(
             &pdfs[0],
             &args.output,
-            &args.env_file,
+            &settings.env_file,
             ProcessPdfOptions {
-                timeout: Duration::from_secs(args.timeout),
-                max_download_bytes: args.max_download_bytes,
-                overwrite: args.overwrite,
-                normalize_tables: args.normalize_tables,
+                timeout: Duration::from_secs(settings.timeout),
+                max_download_bytes: settings.max_download_bytes,
+                overwrite: settings.overwrite,
+                normalize_tables: settings.normalize_tables,
                 progress: progress_callback(&pdfs[0], progress.clone()),
             },
         )
@@ -68,7 +69,7 @@ async fn run() -> Result<i32> {
     let mut skipped_count = 0usize;
     let mut process_pdfs = Vec::new();
     for pdf in pdfs {
-        if !args.overwrite && has_existing_log_marker(&args.output, &pdf) {
+        if !settings.overwrite && has_existing_log_marker(&args.output, &pdf) {
             skipped_count += 1;
         } else {
             process_pdfs.push(pdf);
@@ -86,8 +87,8 @@ async fn run() -> Result<i32> {
         return Ok(0);
     }
 
-    let workers = args.workers.min(process_pdfs.len()).max(1);
-    let ocr_workers = effective_ocr_workers(workers, args.ocr_workers);
+    let workers = settings.workers.min(process_pdfs.len()).max(1);
+    let ocr_workers = effective_ocr_workers(workers, settings.ocr_workers);
     eprintln!(
         "Processing {} PDFs with {} workers (OCR concurrency: {})...",
         process_pdfs.len(),
@@ -101,13 +102,13 @@ async fn run() -> Result<i32> {
         let permit_pool = semaphore.clone();
         let ocr_limiter = ocr_semaphore.clone();
         let output = args.output.clone();
-        let env_file = args.env_file.clone();
+        let env_file = settings.env_file.clone();
         let progress = progress.clone();
         let options = ProcessPdfOptions {
-            timeout: Duration::from_secs(args.timeout),
-            max_download_bytes: args.max_download_bytes,
-            overwrite: args.overwrite,
-            normalize_tables: args.normalize_tables,
+            timeout: Duration::from_secs(settings.timeout),
+            max_download_bytes: settings.max_download_bytes,
+            overwrite: settings.overwrite,
+            normalize_tables: settings.normalize_tables,
             progress: progress_callback(&pdf, progress),
         };
         async move {
@@ -135,7 +136,7 @@ async fn run() -> Result<i32> {
             Ok(summary) => {
                 success_count += 1;
                 downloaded_figures += summary.downloaded_figures;
-                if args.verbose {
+                if settings.verbose {
                     eprintln!("  done: {}", pdf.display());
                 }
             }
@@ -163,48 +164,6 @@ async fn run() -> Result<i32> {
     Ok(if counts.failed > 0 { 1 } else { 0 })
 }
 
-fn apply_config(args: &mut cli::Cli, sources: cli::CliValueSources, config: config::FileConfig) {
-    if !sources.env_file {
-        if let Some(value) = config.env_file {
-            args.env_file = value;
-        }
-    }
-    if !sources.timeout {
-        if let Some(value) = config.timeout {
-            args.timeout = value;
-        }
-    }
-    if !sources.max_download_bytes {
-        if let Some(value) = config.max_download_bytes {
-            args.max_download_bytes = value;
-        }
-    }
-    if !sources.workers {
-        if let Some(value) = config.workers {
-            args.workers = value;
-        }
-    }
-    if !sources.ocr_workers {
-        if let Some(value) = config.ocr_workers {
-            args.ocr_workers = value;
-        }
-    }
-    if !sources.verbose {
-        if let Some(value) = config.verbose {
-            args.verbose = value;
-        }
-    }
-    if !sources.overwrite {
-        if let Some(value) = config.overwrite {
-            args.overwrite = value;
-        }
-    }
-    if !sources.normalize_tables {
-        if let Some(value) = config.normalize_tables {
-            args.normalize_tables = value;
-        }
-    }
-}
 
 fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
