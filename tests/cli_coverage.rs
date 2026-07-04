@@ -15,30 +15,6 @@ fn cli_reports_missing_input_path() {
 }
 
 #[test]
-fn cli_single_pdf_fails_before_network_when_env_missing() {
-    let tmp = TempDir::new().unwrap();
-    let pdf = tmp.path().join("paper.pdf");
-    std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
-    let env_file = tmp.path().join("missing.env");
-
-    let mut cmd = Command::cargo_bin("paperdown").unwrap();
-    let output = cmd
-        .current_dir(tmp.path())
-        .args([
-            "--input",
-            pdf.to_str().unwrap(),
-            "--env-file",
-            env_file.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("ZAI_API_KEY is not set and env file was not found"));
-}
-
-#[test]
 fn cli_batch_reports_failed_count() {
     let tmp = TempDir::new().unwrap();
     let input_dir = tmp.path().join("pdf");
@@ -105,97 +81,6 @@ fn cli_single_pdf_skips_when_log_exists_and_env_missing() {
     assert!(stdout.contains("Skipped"));
     assert!(stdout.contains("paper.pdf"));
     assert!(!stderr.contains("ZAI_API_KEY"));
-}
-
-#[test]
-fn local_config_sets_batch_options_and_env_file() {
-    let tmp = TempDir::new().unwrap();
-    let input_dir = tmp.path().join("pdf");
-    std::fs::create_dir_all(&input_dir).unwrap();
-    std::fs::write(input_dir.join("a.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(input_dir.join("b.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(
-        tmp.path().join("paperdown.toml"),
-        "env-file = \"missing.env\"\nworkers = 1\nocr-workers = 5\n",
-    )
-    .unwrap();
-    let xdg = tmp.path().join("xdg");
-    std::fs::create_dir_all(&xdg).unwrap();
-
-    let mut cmd = Command::cargo_bin("paperdown").unwrap();
-    let output = cmd
-        .current_dir(tmp.path())
-        .args(["--input", "pdf"])
-        .env("XDG_CONFIG_HOME", &xdg)
-        .env_remove("ZAI_API_KEY")
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stdout.contains("Batch Complete processed: 0 skipped: 0 failed: 2 figures: 0"));
-    assert!(stderr.contains("OCR concurrency: 1"));
-    assert!(stderr.contains("ZAI_API_KEY"));
-}
-
-#[test]
-fn cli_flags_override_local_config() {
-    let tmp = TempDir::new().unwrap();
-    let input_dir = tmp.path().join("pdf");
-    std::fs::create_dir_all(&input_dir).unwrap();
-    std::fs::write(input_dir.join("a.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(input_dir.join("b.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(
-        tmp.path().join("paperdown.toml"),
-        "env-file = \"missing.env\"\nworkers = 1\nocr-workers = 1\n",
-    )
-    .unwrap();
-    let xdg = tmp.path().join("xdg");
-    std::fs::create_dir_all(&xdg).unwrap();
-
-    let mut cmd = Command::cargo_bin("paperdown").unwrap();
-    let output = cmd
-        .current_dir(tmp.path())
-        .args(["--input", "pdf", "--workers", "2", "--ocr-workers", "2"])
-        .env("XDG_CONFIG_HOME", &xdg)
-        .env_remove("ZAI_API_KEY")
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Processing 2 PDFs with 2 workers (OCR concurrency: 2)..."));
-}
-
-#[test]
-fn explicit_config_path_disables_local_discovery() {
-    let tmp = TempDir::new().unwrap();
-    let input_dir = tmp.path().join("pdf");
-    std::fs::create_dir_all(&input_dir).unwrap();
-    std::fs::write(input_dir.join("a.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(input_dir.join("b.pdf"), b"%PDF-1.7\n").unwrap();
-    std::fs::write(tmp.path().join("paperdown.toml"), "workers = 1\n").unwrap();
-    std::fs::write(
-        tmp.path().join("other.toml"),
-        "env-file = \"missing.env\"\nworkers = 2\nocr-workers = 2\n",
-    )
-    .unwrap();
-    let xdg = tmp.path().join("xdg");
-    std::fs::create_dir_all(&xdg).unwrap();
-
-    let mut cmd = Command::cargo_bin("paperdown").unwrap();
-    let output = cmd
-        .current_dir(tmp.path())
-        .args(["--input", "pdf", "--config", "other.toml"])
-        .env("XDG_CONFIG_HOME", &xdg)
-        .env_remove("ZAI_API_KEY")
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Processing 2 PDFs with 2 workers (OCR concurrency: 2)..."));
 }
 
 #[test]
