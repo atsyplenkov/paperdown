@@ -87,31 +87,34 @@ Usage: paperdown [OPTIONS] --input <PATH>
 Options:
       --input <PATH>                             Input path: a single .pdf file or a directory containing .pdf files.
       --output <OUTPUT>                          Output root directory for generated markdown folders. [default: md]
-      --env-file <ENV_FILE>                      Path to .env file checked first for ZAI_API_KEY, before environment fallback. [default: .env]
+      --env-file <ENV_FILE>                      Path to .env file checked first for ZAI_API_KEY, before environment fallback.
       --config <PATH>                            Path to a paperdown.toml config file; when set, automatic global/local discovery is disabled.
-      --timeout <TIMEOUT>                        HTTP timeout in seconds for OCR requests and figure downloads. [default: 180]
-      --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file. [default: 20971520]
-      --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode. [default: 32]
-      --ocr-workers <OCR_WORKERS>                Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers). [default: 2]
+      --timeout <TIMEOUT>                        HTTP timeout in seconds for OCR requests and figure downloads.
+      --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file.
+      --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode.
+      --ocr-workers <OCR_WORKERS>                Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers).
   -v, --verbose                                  Enable verbose progress messages on stderr.
+      --quiet                                    Disable verbose progress messages from config.
       --overwrite                                Replace the whole <output>/<pdf_stem>/ folder before processing.
+      --no-overwrite                             Disable overwrite when enabled by config.
       --normalize-tables                         Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
+      --no-normalize-tables                      Disable table normalization when enabled by config.
   -h, --help                                     Print help (see a summary with '-h')
   -V, --version                                  Print version
 ```
 
 ## Configuration
 
-`paperdown` can read shared defaults from `paperdown.toml`. Every CLI setting except `--input` and `--output` can be configured; those two stay CLI-only so each run still names the source PDFs and output root explicitly.
+`paperdown` can read shared defaults from `paperdown.toml`. Runtime settings such as API key file, timeouts, worker counts, verbosity, overwrite behavior, and table normalization can be configured. `--input`, `--output`, and `--config` stay CLI-only so each run still names the source PDFs, output root, and config source explicitly.
 
 Default config locations:
 
 - Global: the platform config directory from `dirs::config_dir()` plus `paperdown/paperdown.toml`. On Linux, this is `${XDG_CONFIG_HOME:-~/.config}/paperdown/paperdown.toml`.
 - Local: the nearest `paperdown.toml` found by walking upward from the current working directory.
 
-Precedence without `--config`: CLI flags > nearest local `paperdown.toml` > global `paperdown.toml` > built-in defaults.
+Precedence without `--config`: CLI overrides > nearest local `paperdown.toml` > global `paperdown.toml` > built-in defaults.
 
-Precedence with `--config <PATH>`: CLI flags > that config file > built-in defaults. Automatic global/local discovery is disabled.
+Precedence with `--config <PATH>`: CLI overrides > that config file > built-in defaults. Automatic global/local discovery is disabled. Boolean settings enabled in config can be disabled per run with `--quiet`, `--no-overwrite`, and `--no-normalize-tables`.
 
 Example:
 

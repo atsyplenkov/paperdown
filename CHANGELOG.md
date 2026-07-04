@@ -15,6 +15,12 @@ Possible sections are:
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-04
+
+### Added:
+- add shared `paperdown.toml` configuration support with global, local, and explicit `--config` loading
+- add CLI overrides for config-backed boolean settings with `--quiet`, `--no-overwrite`, and `--no-normalize-tables`
+
 ### Fixed:
 - avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance ([#7](https://github.com/atsyplenkov/paperdown/issues/7))
 - align skip and output-reuse behavior with marker-based semantics: skip only when `<output>/<pdf_stem>/log.jsonl` exists; otherwise refresh managed artifacts and continue processing ([#11](https://github.com/atsyplenkov/paperdown/issues/11))
