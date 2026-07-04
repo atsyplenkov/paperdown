@@ -1,5 +1,5 @@
-use clap::parser::ValueSource;
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+use crate::config;
+use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
@@ -45,10 +45,10 @@ pub struct Cli {
 
     #[arg(
         long = "env-file",
-        default_value = ".env",
+        value_name = "ENV_FILE",
         help = "Path to .env file checked first for ZAI_API_KEY, before environment fallback."
     )]
-    pub env_file: PathBuf,
+    pub env_file: Option<PathBuf>,
 
     #[arg(
         long,
@@ -59,40 +59,37 @@ pub struct Cli {
 
     #[arg(
         long,
-        default_value_t = 180u64,
         value_parser = clap::value_parser!(u64).range(1..),
         help = "HTTP timeout in seconds for OCR requests and figure downloads."
     )]
-    pub timeout: u64,
+    pub timeout: Option<u64>,
 
     #[arg(
         long = "max-download-bytes",
-        default_value_t = 20_971_520u64,
         value_parser = clap::value_parser!(u64).range(1..),
         help = "Maximum allowed size (bytes) for each downloaded figure file."
     )]
-    pub max_download_bytes: u64,
+    pub max_download_bytes: Option<u64>,
 
     #[arg(
         long,
-        default_value_t = default_workers(),
         value_parser = parse_positive_usize,
         help = "Maximum number of PDFs processed concurrently in batch mode."
     )]
-    pub workers: usize,
+    pub workers: Option<usize>,
 
     #[arg(
         long = "ocr-workers",
-        default_value_t = 2usize,
         value_parser = parse_positive_usize,
         help = "Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers)."
     )]
-    pub ocr_workers: usize,
+    pub ocr_workers: Option<usize>,
 
     #[arg(
         short = 'v',
         long,
         action = ArgAction::SetTrue,
+        conflicts_with = "quiet",
         help = "Enable verbose progress messages on stderr."
     )]
     pub verbose: bool,
@@ -100,62 +97,63 @@ pub struct Cli {
     #[arg(
         long,
         action = ArgAction::SetTrue,
+        help = "Disable verbose progress messages from config."
+    )]
+    pub quiet: bool,
+
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with = "no_overwrite",
         help = "Replace the whole <output>/<pdf_stem>/ folder before processing."
     )]
     pub overwrite: bool,
 
     #[arg(
+        long = "no-overwrite",
+        action = ArgAction::SetTrue,
+        help = "Disable overwrite when enabled by config."
+    )]
+    pub no_overwrite: bool,
+
+    #[arg(
         long = "normalize-tables",
         action = ArgAction::SetTrue,
+        conflicts_with = "no_normalize_tables",
         help = "Normalize OCR HTML tables into Markdown and store raw HTML under tables/."
     )]
     pub normalize_tables: bool,
-}
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CliValueSources {
-    pub env_file: bool,
-    pub timeout: bool,
-    pub max_download_bytes: bool,
-    pub workers: bool,
-    pub ocr_workers: bool,
-    pub verbose: bool,
-    pub overwrite: bool,
-    pub normalize_tables: bool,
+    #[arg(
+        long = "no-normalize-tables",
+        action = ArgAction::SetTrue,
+        help = "Disable table normalization when enabled by config."
+    )]
+    pub no_normalize_tables: bool,
 }
 
 impl Cli {
-    pub fn parse_with_sources() -> (Self, CliValueSources) {
-        Self::parse_from_with_sources(std::env::args_os())
-    }
-
-    pub fn parse_from_with_sources<I, T>(itr: I) -> (Self, CliValueSources)
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        let matches = Cli::command().get_matches_from(itr);
-        let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
-        let sources = CliValueSources {
-            env_file: is_command_line_source(&matches, "env_file"),
-            timeout: is_command_line_source(&matches, "timeout"),
-            max_download_bytes: is_command_line_source(&matches, "max_download_bytes"),
-            workers: is_command_line_source(&matches, "workers"),
-            ocr_workers: is_command_line_source(&matches, "ocr_workers"),
-            verbose: is_command_line_source(&matches, "verbose"),
-            overwrite: is_command_line_source(&matches, "overwrite"),
-            normalize_tables: is_command_line_source(&matches, "normalize_tables"),
-        };
-        (cli, sources)
+    pub fn config_overrides(&self) -> config::ConfigOverrides {
+        config::ConfigOverrides {
+            env_file: self.env_file.clone(),
+            timeout: self.timeout,
+            max_download_bytes: self.max_download_bytes,
+            workers: self.workers,
+            ocr_workers: self.ocr_workers,
+            verbose: bool_override(self.verbose, self.quiet),
+            overwrite: bool_override(self.overwrite, self.no_overwrite),
+            normalize_tables: bool_override(self.normalize_tables, self.no_normalize_tables),
+        }
     }
 }
 
-fn is_command_line_source(matches: &clap::ArgMatches, id: &str) -> bool {
-    matches.value_source(id) == Some(ValueSource::CommandLine)
-}
 
-pub fn default_workers() -> usize {
-    32
+fn bool_override(enable: bool, disable: bool) -> Option<bool> {
+    match (enable, disable) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_positive_usize(value: &str) -> Result<usize, String> {
@@ -174,43 +172,59 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     #[test]
-    fn default_workers_is_32() {
-        assert_eq!(default_workers(), 32);
-    }
-
-    #[test]
-    fn parses_defaults() {
-        let cli = Cli::parse_from(["paperdown", "--input", "in.pdf"]);
-        assert_eq!(cli.input, PathBuf::from("in.pdf"));
-        assert_eq!(cli.output, PathBuf::from("md"));
-        assert_eq!(cli.env_file, PathBuf::from(".env"));
-        assert_eq!(cli.config, None);
-        assert_eq!(cli.timeout, 180);
-        assert_eq!(cli.max_download_bytes, 20_971_520);
-        assert_eq!(cli.workers, default_workers());
-        assert_eq!(cli.ocr_workers, 2);
-        assert!(!cli.verbose);
-        assert!(!cli.overwrite);
-        assert!(!cli.normalize_tables);
-    }
-
-    #[test]
-    fn parse_with_sources_marks_only_command_line_values() {
-        let (_, sources) = Cli::parse_from_with_sources([
+    fn config_overrides_capture_only_explicit_cli_values() {
+        let cli = Cli::parse_from([
             "paperdown",
             "--input",
             "in.pdf",
+            "--env-file",
+            "custom.env",
             "--timeout",
             "9",
+            "--max-download-bytes",
+            "99",
+            "--workers",
+            "3",
+            "--ocr-workers",
+            "2",
             "--verbose",
+            "--overwrite",
+            "--normalize-tables",
         ]);
 
         assert_eq!(
-            sources,
-            CliValueSources {
-                timeout: true,
-                verbose: true,
-                ..CliValueSources::default()
+            cli.config_overrides(),
+            config::ConfigOverrides {
+                env_file: Some(PathBuf::from("custom.env")),
+                timeout: Some(9),
+                max_download_bytes: Some(99),
+                workers: Some(3),
+                ocr_workers: Some(2),
+                verbose: Some(true),
+                overwrite: Some(true),
+                normalize_tables: Some(true),
+            }
+        );
+    }
+
+    #[test]
+    fn disabling_flags_produce_false_config_overrides() {
+        let cli = Cli::parse_from([
+            "paperdown",
+            "--input",
+            "in.pdf",
+            "--quiet",
+            "--no-overwrite",
+            "--no-normalize-tables",
+        ]);
+
+        assert_eq!(
+            cli.config_overrides(),
+            config::ConfigOverrides {
+                verbose: Some(false),
+                overwrite: Some(false),
+                normalize_tables: Some(false),
+                ..config::ConfigOverrides::default()
             }
         );
     }
