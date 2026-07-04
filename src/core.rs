@@ -83,6 +83,7 @@ pub async fn process_pdf_with_ocr_limiter(
         options.overwrite,
         options.normalize_tables,
     )?;
+    ocr::assert_pdf_size_within_api_limit(&pdf_path)?;
     let client = reqwest::Client::builder()
         .timeout(options.timeout)
         .build()?;

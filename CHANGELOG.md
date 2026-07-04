@@ -17,6 +17,7 @@ Possible sections are:
 
 ### Fixed:
 - create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written ([#15](https://github.com/atsyplenkov/paperdown/issues/15))
+- reject PDFs over the Z.AI OCR 50 MiB size limit before API or env-file work ([#9](https://github.com/atsyplenkov/paperdown/issues/9))
 
 ## [0.3.0] - 2026-07-04
 

@@ -6,8 +6,24 @@ use std::path::Path;
 use tokio::fs;
 
 const API_URL: &str = "https://api.z.ai/api/paas/v4/layout_parsing";
+pub(crate) const MAX_PDF_BYTES: u64 = 50 * 1024 * 1024;
+
+pub(crate) fn assert_pdf_size_within_api_limit(pdf_path: &Path) -> Result<()> {
+    let size = pdf_path
+        .metadata()
+        .with_context(|| format!("Failed to read PDF metadata: {}", pdf_path.display()))?
+        .len();
+    if size > MAX_PDF_BYTES {
+        return Err(anyhow!(
+            "PDF exceeds Z.AI OCR size limit: {} is {size} bytes; limit is {MAX_PDF_BYTES} bytes (50 MiB)",
+            pdf_path.display()
+        ));
+    }
+    Ok(())
+}
 
 pub(crate) async fn build_payload(pdf_path: &Path) -> Result<Value> {
+    assert_pdf_size_within_api_limit(pdf_path)?;
     let bytes = fs::read(pdf_path).await?;
     let encoded = STANDARD.encode(bytes);
     Ok(json!({

@@ -13,9 +13,9 @@ use paperdown::core::testing::{
 use paperdown::core::testing::{download_figure, localize_figures};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tempfile::TempDir;
 #[cfg(feature = "net-tests")]
@@ -26,6 +26,25 @@ use tokio::net::TcpListener;
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+const PDF_SIZE_LIMIT_BYTES: u64 = 50 * 1024 * 1024;
+
+fn write_sparse_pdf(path: &Path, len: u64) {
+    let mut file = std::fs::File::create(path).unwrap();
+    use std::io::Write as _;
+    file.write_all(b"%PDF-1.7\n").unwrap();
+    file.set_len(len).unwrap();
+}
+
+fn process_pdf_test_options() -> ProcessPdfOptions {
+    ProcessPdfOptions {
+        timeout: Duration::from_secs(1),
+        max_download_bytes: 1024,
+        overwrite: false,
+        normalize_tables: false,
+        progress: None,
+    }
 }
 
 #[test]
@@ -252,6 +271,22 @@ fn build_payload_contains_pdf_data_uri() {
             .unwrap()
     };
     assert_eq!(decoded, bytes);
+}
+
+#[test]
+fn build_payload_rejects_pdf_over_api_size_limit_before_reading() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("too-large.pdf");
+    write_sparse_pdf(&pdf, PDF_SIZE_LIMIT_BYTES + 1);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt.block_on(build_payload(&pdf)).unwrap_err().to_string();
+
+    assert!(err.contains("PDF exceeds Z.AI OCR size limit"));
+    assert!(err.contains(&pdf.display().to_string()));
+    assert!(err.contains("52428801 bytes"));
+    assert!(err.contains("limit is 52428800 bytes"));
+    assert!(err.contains("50 MiB"));
 }
 
 #[test]
@@ -1091,4 +1126,62 @@ fn process_pdf_reaches_env_lookup_when_log_missing_despite_stale_outputs() {
 
     assert!(err.contains("ZAI_API_KEY"));
     assert!(!err.contains("Re-run with --overwrite"));
+}
+
+#[test]
+fn process_pdf_rejects_oversized_pdf_before_env_lookup() {
+    let _guard = env_lock().lock().unwrap();
+    unsafe {
+        std::env::remove_var("ZAI_API_KEY");
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("too-large.pdf");
+    write_sparse_pdf(&pdf, PDF_SIZE_LIMIT_BYTES + 1);
+
+    let missing_env = tmp.path().join("missing.env");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt
+        .block_on(process_pdf(
+            &pdf,
+            &tmp.path().join("out"),
+            &missing_env,
+            process_pdf_test_options(),
+        ))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("PDF exceeds Z.AI OCR size limit"));
+    assert!(err.contains(&pdf.display().to_string()));
+    assert!(err.contains("52428801 bytes"));
+    assert!(err.contains("limit is 52428800 bytes"));
+    assert!(err.contains("50 MiB"));
+    assert!(!err.contains("ZAI_API_KEY"));
+}
+
+#[test]
+fn process_pdf_allows_pdf_at_api_size_limit_to_reach_env_lookup() {
+    let _guard = env_lock().lock().unwrap();
+    unsafe {
+        std::env::remove_var("ZAI_API_KEY");
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("at-limit.pdf");
+    write_sparse_pdf(&pdf, PDF_SIZE_LIMIT_BYTES);
+
+    let missing_env = tmp.path().join("missing.env");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt
+        .block_on(process_pdf(
+            &pdf,
+            &tmp.path().join("out"),
+            &missing_env,
+            process_pdf_test_options(),
+        ))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("ZAI_API_KEY"));
+    assert!(!err.contains("PDF exceeds Z.AI OCR size limit"));
 }
