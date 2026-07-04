@@ -1,7 +1,7 @@
 mod cli;
+mod config;
 
 use anyhow::Result;
-use clap::Parser;
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use paperdown::core::{
@@ -26,7 +26,10 @@ async fn main() {
 }
 
 async fn run() -> Result<i32> {
-    let args = cli::Cli::parse();
+    let (mut args, sources) = cli::Cli::parse_with_sources();
+    let cwd = std::env::current_dir()?;
+    let file_config = config::load_effective_config(args.config.as_deref(), &cwd)?;
+    apply_config(&mut args, sources, file_config);
     let pdfs = collect_pdfs(&args.input)?;
     let progress = if stderr_is_tty() {
         Some(Arc::new(MultiProgress::with_draw_target(
@@ -158,6 +161,49 @@ async fn run() -> Result<i32> {
         counts.figures,
     );
     Ok(if counts.failed > 0 { 1 } else { 0 })
+}
+
+fn apply_config(args: &mut cli::Cli, sources: cli::CliValueSources, config: config::FileConfig) {
+    if !sources.env_file {
+        if let Some(value) = config.env_file {
+            args.env_file = value;
+        }
+    }
+    if !sources.timeout {
+        if let Some(value) = config.timeout {
+            args.timeout = value;
+        }
+    }
+    if !sources.max_download_bytes {
+        if let Some(value) = config.max_download_bytes {
+            args.max_download_bytes = value;
+        }
+    }
+    if !sources.workers {
+        if let Some(value) = config.workers {
+            args.workers = value;
+        }
+    }
+    if !sources.ocr_workers {
+        if let Some(value) = config.ocr_workers {
+            args.ocr_workers = value;
+        }
+    }
+    if !sources.verbose {
+        if let Some(value) = config.verbose {
+            args.verbose = value;
+        }
+    }
+    if !sources.overwrite {
+        if let Some(value) = config.overwrite {
+            args.overwrite = value;
+        }
+    }
+    if !sources.normalize_tables {
+        if let Some(value) = config.normalize_tables {
+            args.normalize_tables = value;
+        }
+    }
 }
 
 fn stderr_is_tty() -> bool {

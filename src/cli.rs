@@ -1,4 +1,5 @@
-use clap::{ArgAction, Parser};
+use clap::parser::ValueSource;
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
@@ -48,6 +49,13 @@ pub struct Cli {
         help = "Path to .env file checked first for ZAI_API_KEY, before environment fallback."
     )]
     pub env_file: PathBuf,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Path to a paperdown.toml config file; when set, automatic global/local discovery is disabled."
+    )]
+    pub config: Option<PathBuf>,
 
     #[arg(
         long,
@@ -104,6 +112,48 @@ pub struct Cli {
     pub normalize_tables: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CliValueSources {
+    pub env_file: bool,
+    pub timeout: bool,
+    pub max_download_bytes: bool,
+    pub workers: bool,
+    pub ocr_workers: bool,
+    pub verbose: bool,
+    pub overwrite: bool,
+    pub normalize_tables: bool,
+}
+
+impl Cli {
+    pub fn parse_with_sources() -> (Self, CliValueSources) {
+        Self::parse_from_with_sources(std::env::args_os())
+    }
+
+    pub fn parse_from_with_sources<I, T>(itr: I) -> (Self, CliValueSources)
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let matches = Cli::command().get_matches_from(itr);
+        let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+        let sources = CliValueSources {
+            env_file: is_command_line_source(&matches, "env_file"),
+            timeout: is_command_line_source(&matches, "timeout"),
+            max_download_bytes: is_command_line_source(&matches, "max_download_bytes"),
+            workers: is_command_line_source(&matches, "workers"),
+            ocr_workers: is_command_line_source(&matches, "ocr_workers"),
+            verbose: is_command_line_source(&matches, "verbose"),
+            overwrite: is_command_line_source(&matches, "overwrite"),
+            normalize_tables: is_command_line_source(&matches, "normalize_tables"),
+        };
+        (cli, sources)
+    }
+}
+
+fn is_command_line_source(matches: &clap::ArgMatches, id: &str) -> bool {
+    matches.value_source(id) == Some(ValueSource::CommandLine)
+}
+
 pub fn default_workers() -> usize {
     32
 }
@@ -134,6 +184,7 @@ mod tests {
         assert_eq!(cli.input, PathBuf::from("in.pdf"));
         assert_eq!(cli.output, PathBuf::from("md"));
         assert_eq!(cli.env_file, PathBuf::from(".env"));
+        assert_eq!(cli.config, None);
         assert_eq!(cli.timeout, 180);
         assert_eq!(cli.max_download_bytes, 20_971_520);
         assert_eq!(cli.workers, default_workers());
@@ -141,6 +192,27 @@ mod tests {
         assert!(!cli.verbose);
         assert!(!cli.overwrite);
         assert!(!cli.normalize_tables);
+    }
+
+    #[test]
+    fn parse_with_sources_marks_only_command_line_values() {
+        let (_, sources) = Cli::parse_from_with_sources([
+            "paperdown",
+            "--input",
+            "in.pdf",
+            "--timeout",
+            "9",
+            "--verbose",
+        ]);
+
+        assert_eq!(
+            sources,
+            CliValueSources {
+                timeout: true,
+                verbose: true,
+                ..CliValueSources::default()
+            }
+        );
     }
 
     #[test]
@@ -169,6 +241,7 @@ mod tests {
         assert!(help.contains("Examples:"));
         assert!(help.contains("--overwrite"));
         assert!(help.contains("--normalize-tables"));
+        assert!(help.contains("--config"));
         assert!(help.contains(
             "Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF."
         ));
