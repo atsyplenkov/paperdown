@@ -8,10 +8,10 @@ use std::path::PathBuf;
     version,
     about = "Convert academic PDF files into markdown with local figures via Z.AI OCR.",
     long_about = "paperdown converts one PDF or a directory of PDFs into markdown output folders.\n\n\
-For each PDF, it creates:\n\
+For each processed PDF, it writes:\n\
 - <output>/<pdf_stem>/index.md\n\
-- <output>/<pdf_stem>/figures/\n\
-- <output>/<pdf_stem>/tables/ (when --normalize-tables is enabled)\n\
+- <output>/<pdf_stem>/figures/ only when at least one figure is downloaded\n\
+- <output>/<pdf_stem>/tables/ only when --normalize-tables writes raw OCR tables\n\
 - <output>/<pdf_stem>/log.jsonl\n\n\
 API key lookup order:\n\
 1) ZAI_API_KEY from --env-file\n\
@@ -146,7 +146,6 @@ impl Cli {
         }
     }
 }
-
 
 fn bool_override(enable: bool, disable: bool) -> Option<bool> {
     match (enable, disable) {

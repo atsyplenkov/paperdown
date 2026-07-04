@@ -117,7 +117,7 @@ pub async fn process_pdf_with_ocr_limiter(
         let tables_dir = prepared
             .tables_dir
             .as_ref()
-            .expect("tables_dir must exist when normalize_tables is enabled");
+            .expect("tables_dir path must be set when normalize_tables is enabled");
         table_normalization::normalize_tables(&markdown, tables_dir).await?
     } else {
         (markdown, table_normalization::TableStats::default())

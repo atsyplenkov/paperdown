@@ -15,6 +15,9 @@ Possible sections are:
 
 ## [Unreleased]
 
+### Fixed:
+- create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written ([#15](https://github.com/atsyplenkov/paperdown/issues/15))
+
 ## [0.3.0] - 2026-07-04
 
 ### Added:

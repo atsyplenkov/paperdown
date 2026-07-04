@@ -321,21 +321,44 @@ fn round3_rounds_millis() {
 }
 
 #[test]
-fn normalize_tables_rewrites_table_and_writes_artifact() {
+fn normalize_tables_rewrites_table_and_creates_artifact_directory_lazily() {
     let tmp = TempDir::new().unwrap();
+    let tables_dir = tmp.path().join("tables");
     let markdown = "before\n<table>\n<tr><th>Sample Name</th><th>Value</th></tr>\n<tr><td>Alpha</td><td>1</td></tr>\n</table>\nafter";
+    assert!(!tables_dir.exists());
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let (updated, stats) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+    let (updated, stats) = rt
+        .block_on(normalize_tables(markdown, &tables_dir))
+        .unwrap();
 
     assert!(updated.contains("##### OCR Table 1"));
     assert!(updated.contains("Source (OCR HTML): tables/table_001.html"));
     assert!(updated.contains("Columns: sample_name, value"));
     assert!(updated.contains(r#"Row: {"sample_name":"Alpha","value":"1"}"#));
-    assert!(tmp.path().join("table_001.html").exists());
+    assert!(tables_dir.join("table_001.html").exists());
+    assert!(tables_dir.is_dir());
     assert_eq!(stats.tables_found, 1);
     assert_eq!(stats.tables_raw_written, 1);
     assert_eq!(stats.tables_normalized, 1);
+}
+
+#[test]
+fn normalize_tables_without_artifacts_does_not_create_tables_directory() {
+    let tmp = TempDir::new().unwrap();
+    let tables_dir = tmp.path().join("tables");
+    let markdown = "before\nNo OCR tables here.\nafter";
+    assert!(!tables_dir.exists());
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (updated, stats) = rt
+        .block_on(normalize_tables(markdown, &tables_dir))
+        .unwrap();
+
+    assert_eq!(updated, markdown);
+    assert!(!tables_dir.exists());
+    assert_eq!(stats.tables_found, 0);
+    assert_eq!(stats.tables_raw_written, 0);
 }
 
 #[test]
@@ -387,14 +410,18 @@ fn normalize_tables_preserves_json_escaping() {
 #[test]
 fn normalize_tables_leaves_unclosed_table_intact() {
     let tmp = TempDir::new().unwrap();
+    let tables_dir = tmp.path().join("tables");
     let markdown = "before\n<table><tr><td>broken";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let (updated, stats) = rt.block_on(normalize_tables(markdown, tmp.path())).unwrap();
+    let (updated, stats) = rt
+        .block_on(normalize_tables(markdown, &tables_dir))
+        .unwrap();
 
     assert_eq!(updated, markdown);
     assert_eq!(stats.tables_found, 1);
     assert_eq!(stats.tables_failed_extract, 1);
+    assert!(!tables_dir.exists());
 }
 
 #[test]
@@ -764,7 +791,7 @@ fn strip_html_img_alt_attributes_keeps_localized_image_urls() {
 }
 
 #[test]
-fn prepare_output_without_overwrite_replaces_existing_index_when_log_missing() {
+fn prepare_output_without_overwrite_returns_lazy_paths_after_removing_stale_index() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -774,12 +801,13 @@ fn prepare_output_without_overwrite_replaces_existing_index_when_log_missing() {
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
     assert_eq!(prepared.markdown_path, target.join("index.md"));
+    assert_eq!(prepared.figures_dir, target.join("figures"));
     assert!(!prepared.markdown_path.exists());
-    assert!(prepared.figures_dir.is_dir());
+    assert!(!prepared.figures_dir.exists());
 }
 
 #[test]
-fn prepare_output_without_overwrite_cleans_stale_figures_when_log_missing() {
+fn prepare_output_without_overwrite_removes_stale_figures_without_recreating_directory() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -788,8 +816,8 @@ fn prepare_output_without_overwrite_cleans_stale_figures_when_log_missing() {
     std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
-    assert!(prepared.figures_dir.is_dir());
-    assert!(!prepared.figures_dir.join("stale.png").exists());
+    assert_eq!(prepared.figures_dir, target.join("figures"));
+    assert!(!prepared.figures_dir.exists());
 }
 
 #[test]
@@ -804,7 +832,7 @@ fn prepare_output_without_overwrite_cleans_index_and_figures_when_log_missing() 
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
     assert!(!prepared.markdown_path.exists());
-    assert!(!prepared.figures_dir.join("stale.png").exists());
+    assert!(!prepared.figures_dir.exists());
 }
 
 #[test]
@@ -841,7 +869,7 @@ fn prepare_output_with_overwrite_removes_unrelated_files() {
     std::fs::write(out.join("keep.txt"), b"keep").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
-    assert!(prepared.figures_dir.exists());
+    assert!(!prepared.figures_dir.exists());
     assert!(!prepared.figures_dir.join("stale.png").exists());
     assert!(!out.join("keep.txt").exists());
 }
@@ -858,7 +886,7 @@ fn prepare_output_with_overwrite_replaces_output_file_path() {
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
     assert!(prepared.output_dir.is_dir());
-    assert!(prepared.figures_dir.is_dir());
+    assert!(!prepared.figures_dir.exists());
 }
 
 #[test]
@@ -871,11 +899,11 @@ fn prepare_output_with_overwrite_handles_figures_file() {
     std::fs::write(out.join("figures"), b"stale").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
-    assert!(prepared.figures_dir.is_dir());
+    assert!(!prepared.figures_dir.exists());
 }
 
 #[test]
-fn prepare_output_with_normalize_tables_manages_tables_dir() {
+fn prepare_output_with_normalize_tables_returns_lazy_tables_path_after_overwrite() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -884,19 +912,13 @@ fn prepare_output_with_normalize_tables_manages_tables_dir() {
     std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, true).unwrap();
-    assert!(prepared.tables_dir.as_ref().unwrap().is_dir());
-    assert!(
-        !prepared
-            .tables_dir
-            .as_ref()
-            .unwrap()
-            .join("stale.html")
-            .exists()
-    );
+    let tables_dir = prepared.tables_dir.as_ref().unwrap();
+    assert_eq!(tables_dir, &out.join("tables"));
+    assert!(!tables_dir.exists());
 }
 
 #[test]
-fn prepare_output_without_overwrite_cleans_tables_when_enabled_and_log_missing() {
+fn prepare_output_without_overwrite_removes_stale_tables_without_recreating_directory() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF").unwrap();
@@ -905,15 +927,9 @@ fn prepare_output_without_overwrite_cleans_tables_when_enabled_and_log_missing()
     std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, true).unwrap();
-    assert!(prepared.tables_dir.as_ref().unwrap().is_dir());
-    assert!(
-        !prepared
-            .tables_dir
-            .as_ref()
-            .unwrap()
-            .join("stale.html")
-            .exists()
-    );
+    let tables_dir = prepared.tables_dir.as_ref().unwrap();
+    assert_eq!(tables_dir, &out.join("tables"));
+    assert!(!tables_dir.exists());
 }
 
 #[test]
@@ -926,6 +942,7 @@ fn prepare_output_without_overwrite_ignores_stale_tables_when_disabled() {
 
     let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
     assert!(prepared.tables_dir.is_none());
+    assert!(out.join("tables").is_dir());
 }
 
 #[test]

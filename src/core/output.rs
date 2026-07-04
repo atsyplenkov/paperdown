@@ -73,13 +73,7 @@ pub(crate) fn prepare_output_paths(
         }
     }
 
-    std::fs::create_dir_all(&figures_dir)?;
-    let tables_dir = if normalize_tables {
-        std::fs::create_dir_all(&tables_dir)?;
-        Some(tables_dir)
-    } else {
-        None
-    };
+    let tables_dir = normalize_tables.then_some(tables_dir);
 
     Ok(PreparedOutput {
         output_dir,

@@ -164,7 +164,6 @@ async fn run() -> Result<i32> {
     Ok(if counts.failed > 0 { 1 } else { 0 })
 }
 
-
 fn stderr_is_tty() -> bool {
     std::io::stderr().is_terminal()
 }
