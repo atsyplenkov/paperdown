@@ -5,9 +5,72 @@ use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "paperdown";
 pub const CONFIG_FILE_NAME: &str = "paperdown.toml";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedConfig {
+    pub env_file: PathBuf,
+    pub timeout: u64,
+    pub max_download_bytes: u64,
+    pub workers: usize,
+    pub ocr_workers: usize,
+    pub verbose: bool,
+    pub overwrite: bool,
+    pub normalize_tables: bool,
+}
+
+impl Default for ResolvedConfig {
+    fn default() -> Self {
+        Self {
+            env_file: PathBuf::from(DEFAULT_ENV_FILE),
+            timeout: DEFAULT_TIMEOUT,
+            max_download_bytes: DEFAULT_MAX_DOWNLOAD_BYTES,
+            workers: DEFAULT_WORKERS,
+            ocr_workers: DEFAULT_OCR_WORKERS,
+            verbose: false,
+            overwrite: false,
+            normalize_tables: false,
+        }
+    }
+}
+
+impl ResolvedConfig {
+    fn apply(mut self, overrides: ConfigOverrides) -> Self {
+        if let Some(value) = overrides.env_file {
+            self.env_file = value;
+        }
+        if let Some(value) = overrides.timeout {
+            self.timeout = value;
+        }
+        if let Some(value) = overrides.max_download_bytes {
+            self.max_download_bytes = value;
+        }
+        if let Some(value) = overrides.workers {
+            self.workers = value;
+        }
+        if let Some(value) = overrides.ocr_workers {
+            self.ocr_workers = value;
+        }
+        if let Some(value) = overrides.verbose {
+            self.verbose = value;
+        }
+        if let Some(value) = overrides.overwrite {
+            self.overwrite = value;
+        }
+        if let Some(value) = overrides.normalize_tables {
+            self.normalize_tables = value;
+        }
+        self
+    }
+}
+
+pub const DEFAULT_ENV_FILE: &str = ".env";
+pub const DEFAULT_TIMEOUT: u64 = 180;
+pub const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 20_971_520;
+pub const DEFAULT_WORKERS: usize = 32;
+pub const DEFAULT_OCR_WORKERS: usize = 2;
+
 #[derive(Debug, Clone, Default, serde::Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-pub struct FileConfig {
+pub struct ConfigOverrides {
     pub env_file: Option<PathBuf>,
     pub timeout: Option<u64>,
     pub max_download_bytes: Option<u64>,
@@ -18,9 +81,9 @@ pub struct FileConfig {
     pub normalize_tables: Option<bool>,
 }
 
-impl FileConfig {
-    pub fn merge(self, higher: FileConfig) -> FileConfig {
-        FileConfig {
+impl ConfigOverrides {
+    pub fn merge(self, higher: ConfigOverrides) -> ConfigOverrides {
+        ConfigOverrides {
             env_file: higher.env_file.or(self.env_file),
             timeout: higher.timeout.or(self.timeout),
             max_download_bytes: higher.max_download_bytes.or(self.max_download_bytes),
@@ -33,14 +96,34 @@ impl FileConfig {
     }
 
     fn validate(&self, path: &Path) -> Result<(), ConfigLoadError> {
-        validate_positive(self.timeout, "timeout", path)?;
-        validate_positive(self.max_download_bytes, "max-download-bytes", path)?;
-        validate_positive(self.workers, "workers", path)?;
-        validate_positive(self.ocr_workers, "ocr-workers", path)?;
+        if self.timeout == Some(0) {
+            return Err(ConfigLoadError::InvalidPositive {
+                field: "timeout",
+                path: path.to_path_buf(),
+            });
+        }
+        if self.max_download_bytes == Some(0) {
+            return Err(ConfigLoadError::InvalidPositive {
+                field: "max-download-bytes",
+                path: path.to_path_buf(),
+            });
+        }
+        if self.workers == Some(0) {
+            return Err(ConfigLoadError::InvalidPositive {
+                field: "workers",
+                path: path.to_path_buf(),
+            });
+        }
+        if self.ocr_workers == Some(0) {
+            return Err(ConfigLoadError::InvalidPositive {
+                field: "ocr-workers",
+                path: path.to_path_buf(),
+            });
+        }
         Ok(())
     }
 
-    fn rebase_env_file(mut self, path: &Path) -> FileConfig {
+    fn rebase_env_file(mut self, path: &Path) -> ConfigOverrides {
         if let Some(env_file) = self.env_file.as_ref()
             && env_file.is_relative()
         {
@@ -61,8 +144,8 @@ pub enum ConfigLoadError {
         source: toml::de::Error,
         path: PathBuf,
     },
-    Validate {
-        message: String,
+    InvalidPositive {
+        field: &'static str,
         path: PathBuf,
     },
 }
@@ -80,10 +163,11 @@ impl fmt::Display for ConfigLoadError {
                     path.display()
                 )
             }
-            ConfigLoadError::Validate { message, path } => {
-                let _ = path;
-                f.write_str(message)
-            }
+            ConfigLoadError::InvalidPositive { field, path } => write!(
+                f,
+                "config field `{field}` in {} must be greater than 0",
+                path.display()
+            ),
         }
     }
 }
@@ -93,7 +177,7 @@ impl Error for ConfigLoadError {
         match self {
             ConfigLoadError::Read { source, .. } => Some(source),
             ConfigLoadError::Parse { source, .. } => Some(source),
-            ConfigLoadError::Validate { .. } => None,
+            ConfigLoadError::InvalidPositive { .. } => None,
         }
     }
 }
@@ -109,13 +193,13 @@ pub fn find_local_config(start_dir: &Path) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-pub fn load_config_from_path(path: &Path) -> Result<FileConfig, ConfigLoadError> {
+pub fn load_config_from_path(path: &Path) -> Result<ConfigOverrides, ConfigLoadError> {
     let content = std::fs::read_to_string(path).map_err(|source| ConfigLoadError::Read {
         source,
         path: path.to_path_buf(),
     })?;
     let config =
-        toml::from_str::<FileConfig>(&content).map_err(|source| ConfigLoadError::Parse {
+        toml::from_str::<ConfigOverrides>(&content).map_err(|source| ConfigLoadError::Parse {
             source,
             path: path.to_path_buf(),
         })?;
@@ -126,8 +210,8 @@ pub fn load_config_from_path(path: &Path) -> Result<FileConfig, ConfigLoadError>
 fn load_discovered_configs(
     global: Option<&Path>,
     local: Option<&Path>,
-) -> Result<FileConfig, ConfigLoadError> {
-    let mut config = FileConfig::default();
+) -> Result<ConfigOverrides, ConfigLoadError> {
+    let mut config = ConfigOverrides::default();
     if let Some(path) = global {
         config = config.merge(load_config_from_path(path)?);
     }
@@ -137,10 +221,10 @@ fn load_discovered_configs(
     Ok(config)
 }
 
-pub fn load_effective_config(
+fn load_file_config(
     explicit: Option<&Path>,
     cwd: &Path,
-) -> Result<FileConfig, ConfigLoadError> {
+) -> Result<ConfigOverrides, ConfigLoadError> {
     if let Some(path) = explicit {
         return load_config_from_path(path);
     }
@@ -150,29 +234,60 @@ pub fn load_effective_config(
     load_discovered_configs(global.as_deref(), local.as_deref())
 }
 
-fn validate_positive<T>(value: Option<T>, field: &str, path: &Path) -> Result<(), ConfigLoadError>
-where
-    T: PartialEq + From<u8>,
-{
-    if value == Some(T::from(0)) {
-        return Err(ConfigLoadError::Validate {
-            message: format!(
-                "config field `{field}` in {} must be greater than 0",
-                path.display()
-            ),
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(())
+pub fn load_effective_config(
+    explicit: Option<&Path>,
+    cwd: &Path,
+    cli: ConfigOverrides,
+) -> Result<ResolvedConfig, ConfigLoadError> {
+    let file_config = load_file_config(explicit, cwd)?;
+    Ok(ResolvedConfig::default().apply(file_config).apply(cli))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set_path(key: &'static str, value: &Path) -> Self {
+            let original = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(value) = &self.original {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    fn with_xdg_config_home<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+        let _lock = ENV_LOCK.lock().expect("env lock poisoned");
+        let _guard = EnvVarGuard::set_path("XDG_CONFIG_HOME", path);
+        f()
+    }
 
     #[test]
     fn parses_partial_config_with_kebab_case_keys() {
-        let config: FileConfig = toml::from_str(
+        let config: ConfigOverrides = toml::from_str(
             r#"
 timeout = 9
 max-download-bytes = 99
@@ -183,35 +298,41 @@ normalize-tables = true
 
         assert_eq!(
             config,
-            FileConfig {
+            ConfigOverrides {
                 timeout: Some(9),
                 max_download_bytes: Some(99),
                 normalize_tables: Some(true),
-                ..FileConfig::default()
+                ..ConfigOverrides::default()
             }
         );
     }
 
     #[test]
     fn merge_preserves_explicit_false_override() {
-        let lower = FileConfig {
+        let lower = ConfigOverrides {
+            verbose: Some(true),
             overwrite: Some(true),
-            ..FileConfig::default()
+            normalize_tables: Some(true),
+            ..ConfigOverrides::default()
         };
-        let higher = FileConfig {
+        let higher = ConfigOverrides {
+            verbose: Some(false),
             overwrite: Some(false),
-            ..FileConfig::default()
+            normalize_tables: Some(false),
+            ..ConfigOverrides::default()
         };
 
         let merged = lower.merge(higher);
 
+        assert_eq!(merged.verbose, Some(false));
         assert_eq!(merged.overwrite, Some(false));
+        assert_eq!(merged.normalize_tables, Some(false));
     }
 
     #[test]
     fn rejects_unknown_input_output_fields() {
         for field in ["input", "output"] {
-            let err = toml::from_str::<FileConfig>(&format!(r#"{field} = "paper.pdf""#))
+            let err = toml::from_str::<ConfigOverrides>(&format!(r#"{field} = "paper.pdf""#))
                 .expect_err("input and output are CLI-only");
 
             assert!(
@@ -222,7 +343,7 @@ normalize-tables = true
     }
 
     #[test]
-    fn rejects_zero_numeric_values() {
+    fn rejects_zero_numeric_values_with_field_and_path() {
         let temp = tempfile::tempdir().expect("tempdir");
 
         for field in ["timeout", "max-download-bytes", "workers", "ocr-workers"] {
@@ -232,25 +353,14 @@ normalize-tables = true
             let err = load_config_from_path(&path).expect_err("zero numeric field is invalid");
 
             match err {
-                ConfigLoadError::Validate {
-                    message,
+                ConfigLoadError::InvalidPositive {
+                    field: err_field,
                     path: err_path,
                 } => {
+                    assert_eq!(err_field, field);
                     assert_eq!(err_path, path);
-                    assert!(
-                        message.contains(&format!("config field `{field}`")),
-                        "validation message should name {field}: {message}"
-                    );
-                    assert!(
-                        message.contains(&path.display().to_string()),
-                        "validation message should include config path: {message}"
-                    );
-                    assert!(
-                        message.contains("must be greater than 0"),
-                        "validation message should explain the bound: {message}"
-                    );
                 }
-                other => panic!("expected validation error for {field}, got {other:?}"),
+                other => panic!("expected invalid-positive error for {field}, got {other:?}"),
             }
         }
     }
@@ -269,32 +379,116 @@ normalize-tables = true
     }
 
     #[test]
-    fn load_discovered_configs_merges_global_then_local() {
+    fn load_effective_config_merges_global_then_local_then_cli() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let global = temp.path().join("global.toml");
-        let local = temp.path().join("local.toml");
+        let xdg = temp.path().join("xdg");
+        let global_dir = xdg.join(APP_NAME);
+        std::fs::create_dir_all(&global_dir).expect("create global config dir");
         std::fs::write(
-            &global,
+            global_dir.join(CONFIG_FILE_NAME),
             r#"
-workers = 1
+env-file = "global.env"
+timeout = 9
+max-download-bytes = 900
+workers = 4
+ocr-workers = 5
+verbose = true
 overwrite = true
+normalize-tables = true
 "#,
         )
         .expect("write global config");
+
+        let project = temp.path().join("project");
+        let cwd = project.join("nested");
+        std::fs::create_dir_all(&cwd).expect("create project dirs");
         std::fs::write(
-            &local,
+            project.join(CONFIG_FILE_NAME),
             r#"
-ocr-workers = 2
+env-file = "local.env"
+workers = 2
+ocr-workers = 3
 overwrite = false
 "#,
         )
         .expect("write local config");
 
-        let config =
-            load_discovered_configs(Some(&global), Some(&local)).expect("load discovered configs");
+        let cli = ConfigOverrides {
+            timeout: Some(11),
+            max_download_bytes: Some(1_100),
+            verbose: Some(false),
+            normalize_tables: Some(false),
+            ..ConfigOverrides::default()
+        };
 
-        assert_eq!(config.workers, Some(1));
-        assert_eq!(config.ocr_workers, Some(2));
-        assert_eq!(config.overwrite, Some(false));
+        let config = with_xdg_config_home(&xdg, || {
+            load_effective_config(None, &cwd, cli).expect("load effective config")
+        });
+
+        assert_eq!(
+            config,
+            ResolvedConfig {
+                env_file: project.join("local.env"),
+                timeout: 11,
+                max_download_bytes: 1_100,
+                workers: 2,
+                ocr_workers: 3,
+                verbose: false,
+                overwrite: false,
+                normalize_tables: false,
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_config_disables_local_discovery_and_still_yields_to_cli() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        let cwd = project.join("nested");
+        std::fs::create_dir_all(&cwd).expect("create project dirs");
+        std::fs::write(project.join(CONFIG_FILE_NAME), "workers = 0\n")
+            .expect("write invalid local config");
+
+        let explicit_dir = temp.path().join("configs");
+        std::fs::create_dir(&explicit_dir).expect("create explicit config dir");
+        let explicit = explicit_dir.join("chosen.toml");
+        std::fs::write(
+            &explicit,
+            r#"
+env-file = "explicit.env"
+timeout = 7
+max-download-bytes = 700
+workers = 6
+ocr-workers = 4
+verbose = true
+overwrite = true
+normalize-tables = true
+"#,
+        )
+        .expect("write explicit config");
+
+        let cli = ConfigOverrides {
+            max_download_bytes: Some(99),
+            verbose: Some(false),
+            overwrite: Some(false),
+            ..ConfigOverrides::default()
+        };
+
+        let config =
+            load_effective_config(Some(&explicit), &cwd, cli).expect("load explicit config");
+
+        assert_eq!(
+            config,
+            ResolvedConfig {
+                env_file: explicit_dir.join("explicit.env"),
+                timeout: 7,
+                max_download_bytes: 99,
+                workers: 6,
+                ocr_workers: 4,
+                verbose: false,
+                overwrite: false,
+                normalize_tables: true,
+            }
+        );
     }
 }
