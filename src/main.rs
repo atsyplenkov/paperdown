@@ -2,7 +2,7 @@ mod cli;
 mod config;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use paperdown::core::{
@@ -29,9 +29,22 @@ async fn main() {
 async fn run() -> Result<i32> {
     let args = cli::Cli::parse();
     let cwd = std::env::current_dir()?;
+
+    match args.command.clone() {
+        Some(cli::CliCommand::Config(config_args)) => run_config_command(config_args),
+        Some(cli::CliCommand::Doctor(doctor_args)) => run_doctor_command(&args, doctor_args, &cwd),
+        None => run_pdf_processing(args, &cwd).await,
+    }
+}
+
+async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
     let settings =
-        config::load_effective_config(args.config.as_deref(), &cwd, args.config_overrides())?;
-    let pdfs = collect_pdfs(&args.input)?;
+        config::load_effective_config(args.config.as_deref(), cwd, args.config_overrides())?;
+    let input = args
+        .input
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--input is required unless a subcommand is used"))?;
+    let pdfs = collect_pdfs(input)?;
     let progress = if stderr_is_tty() {
         Some(Arc::new(MultiProgress::with_draw_target(
             ProgressDrawTarget::stderr(),
@@ -162,6 +175,54 @@ async fn run() -> Result<i32> {
         counts.figures,
     );
     Ok(if counts.failed > 0 { 1 } else { 0 })
+}
+
+fn run_config_command(args: cli::ConfigArgs) -> Result<i32> {
+    match args.command {
+        cli::ConfigCommand::Init(init) => {
+            let path = config::init_default_config(init.force)?;
+            println!("Created config file: {}", path.display());
+            Ok(0)
+        }
+        cli::ConfigCommand::Check(check) => {
+            let path = config::check_config_file(check.config.as_deref())?;
+            println!("Config OK: {}", path.display());
+            Ok(0)
+        }
+    }
+}
+
+fn run_doctor_command(
+    root_args: &cli::Cli,
+    doctor_args: cli::DoctorArgs,
+    cwd: &Path,
+) -> Result<i32> {
+    if doctor_args.command == Some(cli::DoctorCommand::Help) {
+        let mut command = cli::Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor subcommand must be registered");
+        print!("{}", doctor.render_long_help());
+        return Ok(0);
+    }
+
+    let settings = config::load_effective_config(
+        root_args.config.as_deref(),
+        cwd,
+        root_args.config_overrides(),
+    )?;
+    match core::check_api_key(&settings.env_file) {
+        Ok(()) => {
+            println!("config: ok");
+            println!("auth: ok");
+            Ok(0)
+        }
+        Err(err) => {
+            println!("config: ok");
+            println!("auth: error: {err}");
+            Ok(1)
+        }
+    }
 }
 
 fn stderr_is_tty() -> bool {

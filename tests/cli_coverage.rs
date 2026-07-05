@@ -1,6 +1,8 @@
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
+
 #[test]
 fn cli_reports_missing_input_path() {
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
@@ -29,7 +31,7 @@ fn cli_batch_reports_failed_count() {
         .args([
             "--input",
             input_dir.to_str().unwrap(),
-            "--env-file",
+            "--env",
             env_file.to_str().unwrap(),
             "--workers",
             "1",
@@ -68,7 +70,7 @@ fn cli_single_pdf_skips_when_log_exists_and_env_missing() {
             pdf.to_str().unwrap(),
             "--output",
             output_dir.to_str().unwrap(),
-            "--env-file",
+            "--env",
             env_file.to_str().unwrap(),
         ])
         .env_remove("ZAI_API_KEY")
@@ -104,4 +106,138 @@ fn invalid_config_reports_parse_error() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Failed to parse config file"));
+}
+
+#[test]
+fn config_init_writes_default_config() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["config", "init"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let config_path = xdg.join("paperdown").join("paperdown.toml");
+    assert_eq!(
+        std::fs::read_to_string(config_path).unwrap(),
+        DEFAULT_CONFIG_TEMPLATE
+    );
+}
+
+#[test]
+fn config_init_refuses_existing_without_force() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+    let config_dir = xdg.join("paperdown");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(config_dir.join("paperdown.toml"), "timeout = 9\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["config", "init"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"));
+}
+
+#[test]
+fn config_init_force_overwrites_existing() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+    let config_dir = xdg.join("paperdown");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let config_path = config_dir.join("paperdown.toml");
+    std::fs::write(&config_path, "timeout = 0\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["config", "init", "--force"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(config_path).unwrap(),
+        DEFAULT_CONFIG_TEMPLATE
+    );
+}
+
+#[test]
+fn config_check_accepts_valid_explicit_config() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("paperdown.toml");
+    std::fs::write(&config, "timeout = 9\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["config", "check", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Config OK:"));
+}
+
+#[test]
+fn config_check_rejects_missing_default_config() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["config", "check"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read config file"));
+}
+
+#[test]
+fn doctor_reports_missing_auth_without_input() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["doctor"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env_remove("ZAI_API_KEY")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config: ok"));
+    assert!(stdout.contains("auth: error:"));
+}
+
+#[test]
+fn doctor_accepts_environment_auth_without_input() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .args(["doctor"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("ZAI_API_KEY", "test-key")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("auth: ok"));
 }

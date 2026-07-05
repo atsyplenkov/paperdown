@@ -1,89 +1,196 @@
 use crate::config;
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use std::path::PathBuf;
+
+const TOP_LEVEL_HELP_TEMPLATE: &str = r#"Usage: paperdown [OPTIONS] [COMMAND]
+
+Commands:
+  config       Configuration management
+  doctor       Diagnose config, auth, and ...
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -i, --input <INPUT>
+          Input path: a single .pdf file or a directory containing .pdf files.
+
+  -o, --output <OUTPUT>
+          Output root directory for generated markdown files.
+
+  -c, --config <CONFIG>
+          Path to configuration file
+
+  -e, --env <ENV>
+          Path to .env file checked first for ZAI_API_KEY, before environment fallback.
+
+  --timeout <TIMEOUT>
+          HTTP timeout in seconds for OCR requests and figure downloads.
+
+          [default: 180]
+
+  --max-download-bytes <MAX_DOWNLOAD_BYTES>
+          Maximum allowed size (bytes) for each downloaded figure file.
+
+          [default: 20971520]
+
+  --workers <WORKERS>
+          Maximum number of PDFs processed concurrently in batch mode.
+
+          [default: 32]
+
+  --ocr-workers <OCR_WORKERS>
+          Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers).
+
+          [default: 2]
+
+  -q, --quiet
+          Don't print messages
+
+  -v, --verbose
+          Enable verbose progress messages on stderr.
+
+  --overwrite
+          Replace the whole <output>/<pdf_stem>/ folder before processing.
+
+  -n, --normalize-tables
+          Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+"#;
+
+const CONFIG_HELP_TEMPLATE: &str = r#"Configuration management
+
+Usage: paperdown config <COMMAND>
+
+Commands:
+  init   Generate a default configuration file
+  check  Validate the configuration file
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+"#;
+
+const CONFIG_INIT_HELP_TEMPLATE: &str = r#"Generate a default configuration file
+
+Usage: paperdown config init [OPTIONS]
+
+Options:
+  -f, --force  Overwrite existing configuration file
+  -h, --help   Print help
+"#;
+
+const CONFIG_CHECK_HELP_TEMPLATE: &str = r#"Validate the configuration file
+
+Check the config file for syntax errors and report any issues. Exit code 0 means valid, non-zero means file not found or has errors.
+
+Usage: paperdown config check [OPTIONS]
+
+Options:
+  -c, --config <CONFIG>
+          Path to configuration file to check (defaults to XDG config location)
+
+  -h, --help
+          Print help (see a summary with '-h')
+"#;
+
+const DOCTOR_HELP_TEMPLATE: &str = r#"Check your system for potential problems. Will exit with a non-zero status if
+any potential problems are found.
+
+Usage: paperdown doctor <COMMAND>
+
+Commands:
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+"#;
 
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "paperdown",
     version,
-    about = "Convert academic PDF files into markdown with local figures via Z.AI OCR.",
-    long_about = "paperdown converts one PDF or a directory of PDFs into markdown output folders.\n\n\
-For each processed PDF, it writes:\n\
-- <output>/<pdf_stem>/index.md\n\
-- <output>/<pdf_stem>/figures/ only when at least one figure is downloaded\n\
-- <output>/<pdf_stem>/tables/ only when --normalize-tables writes raw OCR tables\n\
-- <output>/<pdf_stem>/log.jsonl\n\n\
-API key lookup order:\n\
-1) ZAI_API_KEY from --env-file\n\
-2) ZAI_API_KEY from environment",
-    after_help = "Examples:\n  \
-paperdown --input pdf/paper.pdf\n  \
-paperdown --input pdf/ --output md/ --workers 4\n  \
-paperdown --input pdf/ --output md/ --overwrite\n  \
-paperdown --input pdf/ --output md/ --normalize-tables\n\n\
-Notes:\n  \
-Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF.\n  \
-If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled).\n  \
-With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.\n  \
-Progress bars are shown on stderr only when running in a TTY."
+    override_usage = "paperdown [OPTIONS] [COMMAND]",
+    help_template = TOP_LEVEL_HELP_TEMPLATE
 )]
 pub struct Cli {
     #[arg(
+        short = 'i',
         long,
-        value_name = "PATH",
-        required = true,
+        value_name = "INPUT",
         help = "Input path: a single .pdf file or a directory containing .pdf files."
     )]
-    pub input: PathBuf,
+    pub input: Option<PathBuf>,
 
     #[arg(
+        short = 'o',
         long,
+        value_name = "OUTPUT",
         default_value = "md",
-        help = "Output root directory for generated markdown folders."
+        hide_default_value = true,
+        help = "Output root directory for generated markdown files."
     )]
     pub output: PathBuf,
 
     #[arg(
-        long = "env-file",
-        value_name = "ENV_FILE",
+        short = 'c',
+        long,
+        value_name = "CONFIG",
+        help = "Path to configuration file"
+    )]
+    pub config: Option<PathBuf>,
+
+    #[arg(
+        short = 'e',
+        long = "env",
+        value_name = "ENV",
         help = "Path to .env file checked first for ZAI_API_KEY, before environment fallback."
     )]
     pub env_file: Option<PathBuf>,
 
     #[arg(
         long,
-        value_name = "PATH",
-        help = "Path to a paperdown.toml config file; when set, automatic global/local discovery is disabled."
-    )]
-    pub config: Option<PathBuf>,
-
-    #[arg(
-        long,
+        value_name = "TIMEOUT",
         value_parser = clap::value_parser!(u64).range(1..),
-        help = "HTTP timeout in seconds for OCR requests and figure downloads."
+        long_help = "HTTP timeout in seconds for OCR requests and figure downloads.\n\n[default: 180]"
     )]
     pub timeout: Option<u64>,
 
     #[arg(
         long = "max-download-bytes",
+        value_name = "MAX_DOWNLOAD_BYTES",
         value_parser = clap::value_parser!(u64).range(1..),
-        help = "Maximum allowed size (bytes) for each downloaded figure file."
+        long_help = "Maximum allowed size (bytes) for each downloaded figure file.\n\n[default: 20971520]"
     )]
     pub max_download_bytes: Option<u64>,
 
     #[arg(
         long,
+        value_name = "WORKERS",
         value_parser = parse_positive_usize,
-        help = "Maximum number of PDFs processed concurrently in batch mode."
+        long_help = "Maximum number of PDFs processed concurrently in batch mode.\n\n[default: 32]"
     )]
     pub workers: Option<usize>,
 
     #[arg(
         long = "ocr-workers",
+        value_name = "OCR_WORKERS",
         value_parser = parse_positive_usize,
-        help = "Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers)."
+        long_help = "Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers).\n\n[default: 2]"
     )]
     pub ocr_workers: Option<usize>,
+
+    #[arg(
+        short = 'q',
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with = "verbose",
+        help = "Don't print messages"
+    )]
+    pub quiet: bool,
 
     #[arg(
         short = 'v',
@@ -97,39 +204,91 @@ pub struct Cli {
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Disable verbose progress messages from config."
-    )]
-    pub quiet: bool,
-
-    #[arg(
-        long,
-        action = ArgAction::SetTrue,
-        conflicts_with = "no_overwrite",
         help = "Replace the whole <output>/<pdf_stem>/ folder before processing."
     )]
     pub overwrite: bool,
 
     #[arg(
-        long = "no-overwrite",
-        action = ArgAction::SetTrue,
-        help = "Disable overwrite when enabled by config."
-    )]
-    pub no_overwrite: bool,
-
-    #[arg(
+        short = 'n',
         long = "normalize-tables",
         action = ArgAction::SetTrue,
-        conflicts_with = "no_normalize_tables",
         help = "Normalize OCR HTML tables into Markdown and store raw HTML under tables/."
     )]
     pub normalize_tables: bool,
 
-    #[arg(
-        long = "no-normalize-tables",
-        action = ArgAction::SetTrue,
-        help = "Disable table normalization when enabled by config."
+    #[command(subcommand)]
+    pub command: Option<CliCommand>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum CliCommand {
+    #[command(about = "Configuration management")]
+    Config(ConfigArgs),
+    #[command(about = "Diagnose config, auth, and ...")]
+    Doctor(DoctorArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    about = "Configuration management",
+    override_usage = "paperdown config <COMMAND>",
+    help_template = CONFIG_HELP_TEMPLATE
+)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: ConfigCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ConfigCommand {
+    #[command(
+        about = "Generate a default configuration file",
+        override_usage = "paperdown config init [OPTIONS]",
+        help_template = CONFIG_INIT_HELP_TEMPLATE
     )]
-    pub no_normalize_tables: bool,
+    Init(ConfigInitArgs),
+    #[command(
+        about = "Validate the configuration file",
+        long_about = "Validate the configuration file\n\nCheck the config file for syntax errors and report any issues. Exit code 0 means valid, non-zero means file not found or has errors.",
+        override_usage = "paperdown config check [OPTIONS]",
+        help_template = CONFIG_CHECK_HELP_TEMPLATE
+    )]
+    Check(ConfigCheckArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ConfigInitArgs {
+    #[arg(short = 'f', long, help = "Overwrite existing configuration file")]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ConfigCheckArgs {
+    #[arg(
+        short = 'c',
+        long,
+        value_name = "CONFIG",
+        help = "Path to configuration file to check (defaults to XDG config location)"
+    )]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(
+    long_about = "Check your system for potential problems. Will exit with a non-zero status if\nany potential problems are found.",
+    override_usage = "paperdown doctor <COMMAND>",
+    disable_help_subcommand = true,
+    help_template = DOCTOR_HELP_TEMPLATE
+)]
+pub struct DoctorArgs {
+    #[command(subcommand)]
+    pub command: Option<DoctorCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum DoctorCommand {
+    #[command(about = "Print this message or the help of the given subcommand(s)")]
+    Help,
 }
 
 impl Cli {
@@ -141,8 +300,8 @@ impl Cli {
             workers: self.workers,
             ocr_workers: self.ocr_workers,
             verbose: bool_override(self.verbose, self.quiet),
-            overwrite: bool_override(self.overwrite, self.no_overwrite),
-            normalize_tables: bool_override(self.normalize_tables, self.no_normalize_tables),
+            overwrite: bool_override(self.overwrite, false),
+            normalize_tables: bool_override(self.normalize_tables, false),
         }
     }
 }
@@ -170,13 +329,46 @@ mod tests {
     use super::*;
     use clap::{CommandFactory, Parser};
 
+    fn spec_body_between(start_heading: &str, end_heading: Option<&str>) -> String {
+        let spec = include_str!("../SPEC.md");
+        let lines: Vec<&str> = spec.lines().collect();
+        let start = lines
+            .iter()
+            .position(|line| line.trim_end() == start_heading)
+            .unwrap_or_else(|| panic!("missing spec heading {start_heading}"));
+        let end = end_heading
+            .and_then(|heading| lines.iter().position(|line| line.trim_end() == heading))
+            .unwrap_or(lines.len());
+        let mut body = lines[start + 1..end].join("\n");
+        if let Some(stripped) = body.strip_prefix('\n') {
+            body = stripped.to_string();
+        }
+        body = body.trim_end_matches('\n').to_string();
+        body.push('\n');
+        body
+    }
+
+    fn render_help(mut command: clap::Command) -> String {
+        command.render_long_help().to_string()
+    }
+
+    fn nested_subcommand(mut command: clap::Command, names: &[&str]) -> clap::Command {
+        let mut current = &mut command;
+        for name in names {
+            current = current
+                .find_subcommand_mut(name)
+                .unwrap_or_else(|| panic!("missing subcommand {name}"));
+        }
+        current.clone()
+    }
+
     #[test]
     fn config_overrides_capture_only_explicit_cli_values() {
         let cli = Cli::parse_from([
             "paperdown",
             "--input",
             "in.pdf",
-            "--env-file",
+            "--env",
             "custom.env",
             "--timeout",
             "9",
@@ -207,22 +399,13 @@ mod tests {
     }
 
     #[test]
-    fn disabling_flags_produce_false_config_overrides() {
-        let cli = Cli::parse_from([
-            "paperdown",
-            "--input",
-            "in.pdf",
-            "--quiet",
-            "--no-overwrite",
-            "--no-normalize-tables",
-        ]);
+    fn quiet_disables_verbose_config_override() {
+        let cli = Cli::parse_from(["paperdown", "--input", "in.pdf", "--quiet"]);
 
         assert_eq!(
             cli.config_overrides(),
             config::ConfigOverrides {
                 verbose: Some(false),
-                overwrite: Some(false),
-                normalize_tables: Some(false),
                 ..config::ConfigOverrides::default()
             }
         );
@@ -245,31 +428,46 @@ mod tests {
         assert!(
             Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--ocr-workers", "0"]).is_err()
         );
+        assert!(Cli::try_parse_from(["paperdown", "-i", "in.pdf", "-e", ".env", "-n"]).is_ok());
     }
 
     #[test]
-    fn help_text_contains_examples_and_key_guidance() {
-        let mut cmd = Cli::command();
-        let help = cmd.render_long_help().to_string();
-        assert!(help.contains("Examples:"));
-        assert!(help.contains("--overwrite"));
-        assert!(help.contains("--normalize-tables"));
-        assert!(help.contains("--config"));
-        assert!(help.contains(
-            "Without --overwrite, an existing <output>/<pdf_stem>/log.jsonl marker skips the PDF."
-        ));
-        assert!(help.contains(
-            "If the log marker is missing, paperdown treats the PDF as unprocessed and refreshes managed artifacts (index.md, figures/, and tables/ when enabled)."
-        ));
-        assert!(
-            help.contains("With --overwrite, the whole <output>/<pdf_stem>/ folder is replaced.")
+    fn top_level_help_matches_spec() {
+        assert_eq!(
+            render_help(Cli::command()),
+            spec_body_between("# Help", Some("# Commands"))
         );
-        let file_first = help.find("1) ZAI_API_KEY from --env-file");
-        let env_second = help.find("2) ZAI_API_KEY from environment");
-        assert!(file_first.is_some());
-        assert!(env_second.is_some());
-        assert!(file_first.unwrap() < env_second.unwrap());
-        assert!(help.contains("single .pdf file or a directory"));
-        assert!(help.contains("min(--workers, --ocr-workers)"));
+    }
+
+    #[test]
+    fn config_help_matches_spec() {
+        assert_eq!(
+            render_help(nested_subcommand(Cli::command(), &["config"])),
+            spec_body_between("## `config`", Some("### `config init`"))
+        );
+    }
+
+    #[test]
+    fn config_init_help_matches_spec() {
+        assert_eq!(
+            render_help(nested_subcommand(Cli::command(), &["config", "init"])),
+            spec_body_between("### `config init`", Some("### `config check`"))
+        );
+    }
+
+    #[test]
+    fn config_check_help_matches_spec() {
+        assert_eq!(
+            render_help(nested_subcommand(Cli::command(), &["config", "check"])),
+            spec_body_between("### `config check`", Some("## `doctor`"))
+        );
+    }
+
+    #[test]
+    fn doctor_help_matches_spec() {
+        assert_eq!(
+            render_help(nested_subcommand(Cli::command(), &["doctor"])),
+            spec_body_between("## `doctor`", None)
+        );
     }
 }

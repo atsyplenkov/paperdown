@@ -68,6 +68,8 @@ pub const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 20_971_520;
 pub const DEFAULT_WORKERS: usize = 32;
 pub const DEFAULT_OCR_WORKERS: usize = 2;
 
+pub const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
+
 #[derive(Debug, Clone, Default, serde::Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ConfigOverrides {
@@ -182,8 +184,169 @@ impl Error for ConfigLoadError {
     }
 }
 
+#[derive(Debug)]
+pub enum ConfigPathError {
+    Unavailable,
+}
+
+impl fmt::Display for ConfigPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigPathError::Unavailable => write!(f, "could not determine XDG config directory"),
+        }
+    }
+}
+
+impl Error for ConfigPathError {}
+
+#[derive(Debug)]
+pub enum ConfigInitError {
+    Path(ConfigPathError),
+    Exists {
+        path: PathBuf,
+    },
+    CreateDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl fmt::Display for ConfigInitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigInitError::Path(source) => write!(f, "{source}"),
+            ConfigInitError::Exists { path } => {
+                write!(f, "config file already exists: {}", path.display())
+            }
+            ConfigInitError::CreateDir { path, source } => {
+                write!(
+                    f,
+                    "failed to create config directory {}: {source}",
+                    path.display()
+                )
+            }
+            ConfigInitError::Write { path, source } => {
+                write!(
+                    f,
+                    "failed to write config file {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl Error for ConfigInitError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ConfigInitError::Path(source) => Some(source),
+            ConfigInitError::Exists { .. } => None,
+            ConfigInitError::CreateDir { source, .. } => Some(source),
+            ConfigInitError::Write { source, .. } => Some(source),
+        }
+    }
+}
+
+impl From<ConfigPathError> for ConfigInitError {
+    fn from(value: ConfigPathError) -> Self {
+        ConfigInitError::Path(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum ConfigCheckError {
+    Path(ConfigPathError),
+    Load(ConfigLoadError),
+}
+
+impl fmt::Display for ConfigCheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigCheckError::Path(source) => write!(f, "{source}"),
+            ConfigCheckError::Load(source) => write!(f, "{source}"),
+        }
+    }
+}
+
+impl Error for ConfigCheckError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ConfigCheckError::Path(source) => Some(source),
+            ConfigCheckError::Load(source) => Some(source),
+        }
+    }
+}
+
+impl From<ConfigPathError> for ConfigCheckError {
+    fn from(value: ConfigPathError) -> Self {
+        ConfigCheckError::Path(value)
+    }
+}
+
+impl From<ConfigLoadError> for ConfigCheckError {
+    fn from(value: ConfigLoadError) -> Self {
+        ConfigCheckError::Load(value)
+    }
+}
+
 pub fn global_config_file_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join(APP_NAME).join(CONFIG_FILE_NAME))
+}
+
+pub fn default_config_path() -> Result<PathBuf, ConfigPathError> {
+    global_config_file_path().ok_or(ConfigPathError::Unavailable)
+}
+
+pub fn init_default_config(force: bool) -> Result<PathBuf, ConfigInitError> {
+    let path = default_config_path()?;
+    let parent = path.parent().ok_or(ConfigPathError::Unavailable)?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigInitError::CreateDir {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+
+    if force {
+        std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE).map_err(|source| {
+            ConfigInitError::Write {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        return Ok(path);
+    }
+
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(DEFAULT_CONFIG_TEMPLATE.as_bytes())
+                .map_err(|source| ConfigInitError::Write {
+                    path: path.clone(),
+                    source,
+                })?;
+            Ok(path)
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(ConfigInitError::Exists { path })
+        }
+        Err(source) => Err(ConfigInitError::Write { path, source }),
+    }
+}
+
+pub fn check_config_file(explicit: Option<&Path>) -> Result<PathBuf, ConfigCheckError> {
+    let path = match explicit {
+        Some(path) => path.to_path_buf(),
+        None => default_config_path()?,
+    };
+    load_config_from_path(&path)?;
+    Ok(path)
 }
 
 pub fn find_local_config(start_dir: &Path) -> Option<PathBuf> {
@@ -283,6 +446,83 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock poisoned");
         let _guard = EnvVarGuard::set_path("XDG_CONFIG_HOME", path);
         f()
+    }
+
+    #[test]
+    fn default_config_template_is_valid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join(CONFIG_FILE_NAME);
+        std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE).expect("write default config");
+
+        let config = load_config_from_path(&path).expect("load default config");
+
+        assert_eq!(
+            config,
+            ConfigOverrides {
+                env_file: Some(temp.path().join(".env")),
+                timeout: Some(DEFAULT_TIMEOUT),
+                max_download_bytes: Some(DEFAULT_MAX_DOWNLOAD_BYTES),
+                workers: Some(DEFAULT_WORKERS),
+                ocr_workers: Some(DEFAULT_OCR_WORKERS),
+                verbose: Some(false),
+                overwrite: Some(false),
+                normalize_tables: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn init_default_config_refuses_existing_without_force() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let xdg = temp.path().join("xdg");
+        let config_dir = xdg.join(APP_NAME);
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let path = config_dir.join(CONFIG_FILE_NAME);
+        std::fs::write(&path, "timeout = 9\n").expect("write existing config");
+
+        with_xdg_config_home(&xdg, || {
+            let err = init_default_config(false).expect_err("existing config is refused");
+            match err {
+                ConfigInitError::Exists { path: err_path } => assert_eq!(err_path, path),
+                other => panic!("expected exists error, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn init_default_config_overwrites_with_force() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let xdg = temp.path().join("xdg");
+        let config_dir = xdg.join(APP_NAME);
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let path = config_dir.join(CONFIG_FILE_NAME);
+        std::fs::write(&path, "timeout = 0\n").expect("write invalid config");
+
+        with_xdg_config_home(&xdg, || {
+            let created = init_default_config(true).expect("force overwrite config");
+            assert_eq!(created, path);
+        });
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read overwritten config"),
+            DEFAULT_CONFIG_TEMPLATE
+        );
+    }
+
+    #[test]
+    fn check_config_file_validates_explicit_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let valid = temp.path().join("valid.toml");
+        let invalid = temp.path().join("invalid.toml");
+        std::fs::write(&valid, "timeout = 9\n").expect("write valid config");
+        std::fs::write(&invalid, "timeout = 0\n").expect("write invalid config");
+
+        assert_eq!(
+            check_config_file(Some(&valid)).expect("valid config"),
+            valid
+        );
+        let err = check_config_file(Some(&invalid)).expect_err("invalid config rejected");
+        assert!(matches!(err, ConfigCheckError::Load(_)));
     }
 
     #[test]

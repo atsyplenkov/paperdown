@@ -20,6 +20,10 @@ pub fn collect_pdfs(input_path: &Path) -> Result<Vec<std::path::PathBuf>> {
     input::collect_pdfs(input_path)
 }
 
+pub fn check_api_key(env_file: &Path) -> Result<()> {
+    input::load_api_key(env_file).map(|_| ())
+}
+
 #[derive(Clone, Debug)]
 pub enum ProgressEvent {
     OcrStarted,

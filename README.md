@@ -69,38 +69,63 @@ cargo install --git https://github.com/atsyplenkov/paperdown.git
 ## CLI Usage
 
 ```text
-$ paperdown --help
-paperdown converts one PDF or a directory of PDFs into markdown output folders.
+Usage: paperdown [OPTIONS] [COMMAND]
 
-For each PDF, it creates:
-- <output>/<pdf_stem>/index.md
-- <output>/<pdf_stem>/figures/
-- <output>/<pdf_stem>/tables/ (when `--normalize-tables` is enabled)
-- <output>/<pdf_stem>/log.jsonl
-
-API key lookup order:
-1) ZAI_API_KEY from --env-file
-2) ZAI_API_KEY from environment
-
-Usage: paperdown [OPTIONS] --input <PATH>
+Commands:
+  config       Configuration management
+  doctor       Diagnose config, auth, and ...
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
-      --input <PATH>                             Input path: a single .pdf file or a directory containing .pdf files.
-      --output <OUTPUT>                          Output root directory for generated markdown folders. [default: md]
-      --env-file <ENV_FILE>                      Path to .env file checked first for ZAI_API_KEY, before environment fallback.
-      --config <PATH>                            Path to a paperdown.toml config file; when set, automatic global/local discovery is disabled.
-      --timeout <TIMEOUT>                        HTTP timeout in seconds for OCR requests and figure downloads.
-      --max-download-bytes <MAX_DOWNLOAD_BYTES>  Maximum allowed size (bytes) for each downloaded figure file.
-      --workers <WORKERS>                        Maximum number of PDFs processed concurrently in batch mode.
-      --ocr-workers <OCR_WORKERS>                Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers).
-  -v, --verbose                                  Enable verbose progress messages on stderr.
-      --quiet                                    Disable verbose progress messages from config.
-      --overwrite                                Replace the whole <output>/<pdf_stem>/ folder before processing.
-      --no-overwrite                             Disable overwrite when enabled by config.
-      --normalize-tables                         Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
-      --no-normalize-tables                      Disable table normalization when enabled by config.
-  -h, --help                                     Print help (see a summary with '-h')
-  -V, --version                                  Print version
+  -i, --input <INPUT>
+          Input path: a single .pdf file or a directory containing .pdf files.
+
+  -o, --output <OUTPUT>
+          Output root directory for generated markdown files.
+
+  -c, --config <CONFIG>
+          Path to configuration file
+
+  -e, --env <ENV>
+          Path to .env file checked first for ZAI_API_KEY, before environment fallback.
+
+  --timeout <TIMEOUT>
+          HTTP timeout in seconds for OCR requests and figure downloads.
+
+          [default: 180]
+
+  --max-download-bytes <MAX_DOWNLOAD_BYTES>
+          Maximum allowed size (bytes) for each downloaded figure file.
+
+          [default: 20971520]
+
+  --workers <WORKERS>
+          Maximum number of PDFs processed concurrently in batch mode.
+
+          [default: 32]
+
+  --ocr-workers <OCR_WORKERS>
+          Maximum number of concurrent OCR API calls in batch mode; effective OCR concurrency is min(--workers, --ocr-workers).
+
+          [default: 2]
+
+  -q, --quiet
+          Don't print messages
+
+  -v, --verbose
+          Enable verbose progress messages on stderr.
+
+  --overwrite
+          Replace the whole <output>/<pdf_stem>/ folder before processing.
+
+  -n, --normalize-tables
+          Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 ## Configuration
@@ -114,7 +139,7 @@ Default config locations:
 
 Precedence without `--config`: CLI overrides > nearest local `paperdown.toml` > global `paperdown.toml` > built-in defaults.
 
-Precedence with `--config <PATH>`: CLI overrides > that config file > built-in defaults. Automatic global/local discovery is disabled. Boolean settings enabled in config can be disabled per run with `--quiet`, `--no-overwrite`, and `--no-normalize-tables`.
+Precedence with `--config <PATH>`: CLI overrides > that config file > built-in defaults. Automatic global/local discovery is disabled. Verbose output enabled in config can be disabled per run with `--quiet`.
 
 Example:
 
@@ -129,11 +154,11 @@ overwrite = false
 normalize-tables = false
 ```
 
-Relative `env-file` values in TOML are resolved relative to the TOML file directory. CLI `--env-file` paths keep normal current-working-directory behavior.
+Relative `env-file` values in TOML are resolved relative to the TOML file directory. CLI `--env` paths keep normal current-working-directory behavior.
 
 ## API Key
 
-`paperdown` first looks for `ZAI_API_KEY` in the `--env-file`. If it is not found, it then checks the environment variables. To obtain a key, create an account in the [Z.AI console](https://z.ai/manage-apikey/apikey-list) and generate an API key from your account settings.
+`paperdown` first looks for `ZAI_API_KEY` in the `--env` file. If it is not found, it then checks the environment variables. To obtain a key, create an account in the [Z.AI console](https://z.ai/manage-apikey/apikey-list) and generate an API key from your account settings.
 ### Storing the Key
 
 The easiest method is to set `ZAI_API_KEY` in your shell environment.
@@ -149,7 +174,7 @@ If you prefer to use a file, create a `.env` file in the project's root director
 ZAI_API_KEY=your-api-key
 ```
 
-Then, run `paperdown` as usual, or specify a different file using `--env-file`.
+Then, run `paperdown` as usual, or specify a different file using `--env`.
 
 ## Examples
 

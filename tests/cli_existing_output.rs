@@ -33,7 +33,7 @@ fn batch_without_log_marker_reaches_env_lookup_even_with_stale_outputs() {
             out_dir.to_str().expect("out path"),
             "--workers",
             "4",
-            "--env-file",
+            "--env",
             missing_env.to_str().expect("env path"),
         ])
         .env_remove("ZAI_API_KEY")
@@ -87,7 +87,7 @@ fn batch_existing_log_outputs_skip_without_env_or_ocr() {
             out_dir.to_str().expect("out path"),
             "--workers",
             "2",
-            "--env-file",
+            "--env",
             missing_env.to_str().expect("env path"),
         ])
         .env_remove("ZAI_API_KEY")
