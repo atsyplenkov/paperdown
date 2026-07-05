@@ -17,6 +17,12 @@ pub struct ResolvedConfig {
     pub normalize_tables: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveConfig {
+    pub settings: ResolvedConfig,
+    pub config_files: Vec<PathBuf>,
+}
+
 impl Default for ResolvedConfig {
     fn default() -> Self {
         Self {
@@ -388,13 +394,28 @@ fn load_file_config(
     explicit: Option<&Path>,
     cwd: &Path,
 ) -> Result<ConfigOverrides, ConfigLoadError> {
+    load_file_config_with_sources(explicit, cwd).map(|(config, _sources)| config)
+}
+
+fn load_file_config_with_sources(
+    explicit: Option<&Path>,
+    cwd: &Path,
+) -> Result<(ConfigOverrides, Vec<PathBuf>), ConfigLoadError> {
     if let Some(path) = explicit {
-        return load_config_from_path(path);
+        return Ok((load_config_from_path(path)?, vec![path.to_path_buf()]));
     }
 
     let global = global_config_file_path().filter(|path| path.exists());
     let local = find_local_config(cwd);
-    load_discovered_configs(global.as_deref(), local.as_deref())
+    let mut sources = Vec::new();
+    if let Some(path) = global.as_ref() {
+        sources.push(path.clone());
+    }
+    if let Some(path) = local.as_ref() {
+        sources.push(path.clone());
+    }
+    let config = load_discovered_configs(global.as_deref(), local.as_deref())?;
+    Ok((config, sources))
 }
 
 pub fn load_effective_config(
@@ -404,6 +425,19 @@ pub fn load_effective_config(
 ) -> Result<ResolvedConfig, ConfigLoadError> {
     let file_config = load_file_config(explicit, cwd)?;
     Ok(ResolvedConfig::default().apply(file_config).apply(cli))
+}
+
+pub fn load_effective_config_with_sources(
+    explicit: Option<&Path>,
+    cwd: &Path,
+    cli: ConfigOverrides,
+) -> Result<EffectiveConfig, ConfigLoadError> {
+    let (file_config, config_files) = load_file_config_with_sources(explicit, cwd)?;
+    let settings = ResolvedConfig::default().apply(file_config).apply(cli);
+    Ok(EffectiveConfig {
+        settings,
+        config_files,
+    })
 }
 
 #[cfg(test)]
@@ -678,6 +712,31 @@ overwrite = false
                 normalize_tables: false,
             }
         );
+    }
+
+    #[test]
+    fn load_effective_config_with_sources_reports_loaded_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let xdg = temp.path().join("xdg");
+        let global_dir = xdg.join(APP_NAME);
+        std::fs::create_dir_all(&global_dir).expect("create global config dir");
+        let global = global_dir.join(CONFIG_FILE_NAME);
+        std::fs::write(&global, "timeout = 9\n").expect("write global config");
+
+        let project = temp.path().join("project");
+        let cwd = project.join("nested");
+        std::fs::create_dir_all(&cwd).expect("create project dirs");
+        let local = project.join(CONFIG_FILE_NAME);
+        std::fs::write(&local, "workers = 2\n").expect("write local config");
+
+        let effective = with_xdg_config_home(&xdg, || {
+            load_effective_config_with_sources(None, &cwd, ConfigOverrides::default())
+                .expect("load effective config")
+        });
+
+        assert_eq!(effective.config_files, vec![global, local]);
+        assert_eq!(effective.settings.timeout, 9);
+        assert_eq!(effective.settings.workers, 2);
     }
 
     #[test]

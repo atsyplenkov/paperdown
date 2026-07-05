@@ -9,7 +9,7 @@ use paperdown::core::{
     self, PdfSummary, ProcessPdfOptions, ProgressCallback, ProgressEvent, collect_pdfs,
 };
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -206,23 +206,51 @@ fn run_doctor_command(
         return Ok(0);
     }
 
-    let settings = config::load_effective_config(
+    let effective = config::load_effective_config_with_sources(
         root_args.config.as_deref(),
         cwd,
         root_args.config_overrides(),
     )?;
-    match core::check_api_key(&settings.env_file) {
+    let env_file = path_for_display(&effective.settings.env_file, cwd);
+    let config_files = effective
+        .config_files
+        .iter()
+        .map(|path| path_for_display(path, cwd))
+        .collect::<Vec<_>>();
+
+    match core::check_api_key(&effective.settings.env_file) {
         Ok(()) => {
-            println!("config: ok");
+            print_doctor_config_stdout(&config_files);
             println!("auth: ok");
+            println!("env file: {}", env_file.display());
             Ok(0)
         }
         Err(err) => {
-            println!("config: ok");
+            print_doctor_config_stdout(&config_files);
             println!("auth: error: {err}");
+            println!("env file: {}", env_file.display());
             Ok(1)
         }
     }
+}
+
+fn print_doctor_config_stdout(config_files: &[PathBuf]) {
+    println!("config: ok");
+    println!("config files:");
+    if config_files.is_empty() {
+        println!("  none");
+    } else {
+        for path in config_files {
+            println!("  {}", path.display());
+        }
+    }
+}
+
+fn path_for_display(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    cwd.join(path)
 }
 
 fn stderr_is_tty() -> bool {

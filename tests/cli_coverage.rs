@@ -209,9 +209,11 @@ fn config_check_rejects_missing_default_config() {
 fn doctor_reports_missing_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let xdg = tmp.path().join("xdg");
+    let env_file = tmp.path().join(".env");
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
+        .current_dir(tmp.path())
         .args(["doctor"])
         .env("XDG_CONFIG_HOME", &xdg)
         .env_remove("ZAI_API_KEY")
@@ -221,16 +223,22 @@ fn doctor_reports_missing_auth_without_input() {
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("config: ok"));
+    assert!(stdout.contains("config files:\n  none"));
+    let env_line = format!("env file: {}", env_file.display());
+    assert!(stdout.contains(&env_line));
     assert!(stdout.contains("auth: error:"));
+    assert!(stdout.find("auth: error:").unwrap() < stdout.find(&env_line).unwrap());
 }
 
 #[test]
 fn doctor_accepts_environment_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let xdg = tmp.path().join("xdg");
+    let env_file = tmp.path().join(".env");
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
+        .current_dir(tmp.path())
         .args(["doctor"])
         .env("XDG_CONFIG_HOME", &xdg)
         .env("ZAI_API_KEY", "test-key")
@@ -239,5 +247,39 @@ fn doctor_accepts_environment_auth_without_input() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config: ok"));
+    assert!(stdout.contains("config files:\n  none"));
+    let env_line = format!("env file: {}", env_file.display());
+    assert!(stdout.contains(&env_line));
     assert!(stdout.contains("auth: ok"));
+    assert!(stdout.find("auth: ok").unwrap() < stdout.find(&env_line).unwrap());
+}
+
+#[test]
+fn doctor_reports_explicit_config_and_rebased_env_paths() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = tmp.path().join("xdg");
+    let config_dir = tmp.path().join("configs");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let config = config_dir.join("paperdown.toml");
+    let env_file = config_dir.join("custom.env");
+    std::fs::write(&config, "env-file = \"custom.env\"\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("paperdown").unwrap();
+    let output = cmd
+        .current_dir(tmp.path())
+        .args(["--config", config.to_str().unwrap(), "doctor"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("ZAI_API_KEY", "test-key")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config: ok"));
+    assert!(stdout.contains(&format!("  {}", config.display())));
+    let env_line = format!("env file: {}", env_file.display());
+    assert!(stdout.contains(&env_line));
+    assert!(stdout.contains("auth: ok"));
+    assert!(stdout.find("auth: ok").unwrap() < stdout.find(&env_line).unwrap());
 }
