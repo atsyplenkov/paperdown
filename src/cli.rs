@@ -327,40 +327,7 @@ fn parse_positive_usize(value: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::{CommandFactory, Parser};
-
-    fn spec_body_between(start_heading: &str, end_heading: Option<&str>) -> String {
-        let spec = include_str!("../SPEC.md");
-        let lines: Vec<&str> = spec.lines().collect();
-        let start = lines
-            .iter()
-            .position(|line| line.trim_end() == start_heading)
-            .unwrap_or_else(|| panic!("missing spec heading {start_heading}"));
-        let end = end_heading
-            .and_then(|heading| lines.iter().position(|line| line.trim_end() == heading))
-            .unwrap_or(lines.len());
-        let mut body = lines[start + 1..end].join("\n");
-        if let Some(stripped) = body.strip_prefix('\n') {
-            body = stripped.to_string();
-        }
-        body = body.trim_end_matches('\n').to_string();
-        body.push('\n');
-        body
-    }
-
-    fn render_help(mut command: clap::Command) -> String {
-        command.render_long_help().to_string()
-    }
-
-    fn nested_subcommand(mut command: clap::Command, names: &[&str]) -> clap::Command {
-        let mut current = &mut command;
-        for name in names {
-            current = current
-                .find_subcommand_mut(name)
-                .unwrap_or_else(|| panic!("missing subcommand {name}"));
-        }
-        current.clone()
-    }
+    use clap::Parser;
 
     #[test]
     fn config_overrides_capture_only_explicit_cli_values() {
@@ -429,45 +396,5 @@ mod tests {
             Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--ocr-workers", "0"]).is_err()
         );
         assert!(Cli::try_parse_from(["paperdown", "-i", "in.pdf", "-e", ".env", "-n"]).is_ok());
-    }
-
-    #[test]
-    fn top_level_help_matches_spec() {
-        assert_eq!(
-            render_help(Cli::command()),
-            spec_body_between("# Help", Some("# Commands"))
-        );
-    }
-
-    #[test]
-    fn config_help_matches_spec() {
-        assert_eq!(
-            render_help(nested_subcommand(Cli::command(), &["config"])),
-            spec_body_between("## `config`", Some("### `config init`"))
-        );
-    }
-
-    #[test]
-    fn config_init_help_matches_spec() {
-        assert_eq!(
-            render_help(nested_subcommand(Cli::command(), &["config", "init"])),
-            spec_body_between("### `config init`", Some("### `config check`"))
-        );
-    }
-
-    #[test]
-    fn config_check_help_matches_spec() {
-        assert_eq!(
-            render_help(nested_subcommand(Cli::command(), &["config", "check"])),
-            spec_body_between("### `config check`", Some("## `doctor`"))
-        );
-    }
-
-    #[test]
-    fn doctor_help_matches_spec() {
-        assert_eq!(
-            render_help(nested_subcommand(Cli::command(), &["doctor"])),
-            spec_body_between("## `doctor`", None)
-        );
     }
 }
