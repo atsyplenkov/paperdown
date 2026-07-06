@@ -268,7 +268,7 @@ pub struct ConfigCheckArgs {
         short = 'c',
         long,
         value_name = "CONFIG",
-        help = "Path to configuration file to check (defaults to XDG config location)"
+        help = "Path to configuration file to check (defaults to the global config location)"
     )]
     pub config: Option<PathBuf>,
 }

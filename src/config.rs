@@ -198,7 +198,7 @@ pub enum ConfigPathError {
 impl fmt::Display for ConfigPathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigPathError::Unavailable => write!(f, "could not determine XDG config directory"),
+            ConfigPathError::Unavailable => write!(f, "could not determine config directory"),
         }
     }
 }
@@ -299,30 +299,24 @@ impl From<ConfigLoadError> for ConfigCheckError {
     }
 }
 
-fn config_file_path(config_dir: PathBuf) -> PathBuf {
-    config_dir.join(APP_NAME).join(CONFIG_FILE_NAME)
-}
-
-pub fn global_config_file_path() -> Option<PathBuf> {
-    dirs::config_dir().map(config_file_path)
-fn configured_config_dir() -> Option<PathBuf> {
-    test_config_dir_override().or_else(dirs::config_dir)
-}
-
-#[cfg(debug_assertions)]
-fn test_config_dir_override() -> Option<PathBuf> {
-    std::env::var_os("PAPERDOWN_TEST_CONFIG_DIR")
+fn global_config_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("PAPERDOWN_CONFIG_DIR")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
+    {
+        return Some(path);
+    }
+
+    let strategy = etcetera::base_strategy::choose_base_strategy().ok()?;
+    Some(etcetera::base_strategy::BaseStrategy::config_dir(&strategy).join(APP_NAME))
 }
 
-#[cfg(not(debug_assertions))]
-fn test_config_dir_override() -> Option<PathBuf> {
-    None
+fn config_file_path(config_dir: PathBuf) -> PathBuf {
+    config_dir.join(CONFIG_FILE_NAME)
 }
 
 pub fn global_config_file_path() -> Option<PathBuf> {
-    configured_config_dir().map(config_file_path)
+    global_config_dir().map(config_file_path)
 }
 
 pub fn default_config_path() -> Result<PathBuf, ConfigPathError> {
@@ -450,8 +444,7 @@ fn load_file_config_with_sources(
     explicit: Option<&Path>,
     cwd: &Path,
 ) -> Result<(ConfigOverrides, Vec<PathBuf>), ConfigLoadError> {
-    load_file_config_with_sources_from_config_dir(explicit, cwd, dirs::config_dir())
-    load_file_config_with_sources_from_config_dir(explicit, cwd, configured_config_dir())
+    load_file_config_with_sources_from_config_dir(explicit, cwd, global_config_dir())
 }
 
 pub fn load_effective_config(
@@ -648,7 +641,7 @@ normalize-tables = true
     fn load_effective_config_merges_global_then_local_then_cli() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
-        let global_dir = config_root.join(APP_NAME);
+        let global_dir = config_root.clone();
         std::fs::create_dir_all(&global_dir).expect("create global config dir");
         std::fs::write(
             global_dir.join(CONFIG_FILE_NAME),
@@ -711,7 +704,7 @@ overwrite = false
     fn load_effective_config_with_sources_reports_loaded_files() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
-        let global_dir = config_root.join(APP_NAME);
+        let global_dir = config_root.clone();
         std::fs::create_dir_all(&global_dir).expect("create global config dir");
         let global = global_dir.join(CONFIG_FILE_NAME);
         std::fs::write(&global, "timeout = 9\n").expect("write global config");

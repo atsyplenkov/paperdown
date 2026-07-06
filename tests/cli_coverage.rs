@@ -4,23 +4,27 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
-const TEST_CONFIG_DIR_ENV: &str = "PAPERDOWN_TEST_CONFIG_DIR";
+const TEST_CONFIG_DIR_ENV: &str = "PAPERDOWN_CONFIG_DIR";
 
 fn test_config_root(tmp: &TempDir) -> PathBuf {
-    let root = tmp.path().join("config-root");
+    let root = tmp.path().join("config-dir");
     std::fs::create_dir_all(&root).unwrap();
     root
 }
 
 fn default_config_path(config_root: &Path) -> PathBuf {
-    config_root.join("paperdown").join("paperdown.toml")
+    config_root.join("paperdown.toml")
 }
 
 #[test]
 fn cli_reports_missing_input_path() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = test_config_root(&tmp);
+
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["--input", "/definitely/missing/path.pdf"])
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -32,6 +36,7 @@ fn cli_reports_missing_input_path() {
 #[test]
 fn cli_batch_reports_failed_count() {
     let tmp = TempDir::new().unwrap();
+    let config_root = test_config_root(&tmp);
     let input_dir = tmp.path().join("pdf");
     std::fs::create_dir_all(&input_dir).unwrap();
     std::fs::write(input_dir.join("a.pdf"), b"%PDF-1.7\n").unwrap();
@@ -51,6 +56,7 @@ fn cli_batch_reports_failed_count() {
             "--ocr-workers",
             "5",
         ])
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -65,6 +71,7 @@ fn cli_batch_reports_failed_count() {
 #[test]
 fn cli_single_pdf_skips_when_log_exists_and_env_missing() {
     let tmp = TempDir::new().unwrap();
+    let config_root = test_config_root(&tmp);
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
 
@@ -87,6 +94,7 @@ fn cli_single_pdf_skips_when_log_exists_and_env_missing() {
             env_file.to_str().unwrap(),
         ])
         .env_remove("ZAI_API_KEY")
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -144,7 +152,7 @@ fn config_init_writes_default_config() {
 fn config_init_refuses_existing_without_force() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let config_dir = config_root.join("paperdown");
+    let config_dir = config_root.clone();
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("paperdown.toml"), "timeout = 9\n").unwrap();
 
@@ -164,7 +172,7 @@ fn config_init_refuses_existing_without_force() {
 fn config_init_force_overwrites_existing() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let config_dir = config_root.join("paperdown");
+    let config_dir = config_root.clone();
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_path = config_dir.join("paperdown.toml");
     std::fs::write(&config_path, "timeout = 0\n").unwrap();
@@ -186,12 +194,14 @@ fn config_init_force_overwrites_existing() {
 #[test]
 fn config_check_accepts_valid_explicit_config() {
     let tmp = TempDir::new().unwrap();
+    let config_root = test_config_root(&tmp);
     let config = tmp.path().join("paperdown.toml");
     std::fs::write(&config, "timeout = 9\n").unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["config", "check", "--config", config.to_str().unwrap()])
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 

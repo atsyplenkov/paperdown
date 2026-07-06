@@ -134,7 +134,7 @@ Options:
 
 Default config locations:
 
-- Global: the platform config directory from `dirs::config_dir()` plus `paperdown/paperdown.toml`. On Linux, this is `${XDG_CONFIG_HOME:-~/.config}/paperdown/paperdown.toml`.
+- Global: `${PAPERDOWN_CONFIG_DIR}/paperdown.toml` when `PAPERDOWN_CONFIG_DIR` is set to an absolute path; otherwise the CLI-style platform config directory plus `paperdown/paperdown.toml` (`${XDG_CONFIG_HOME:-~/.config}/paperdown/paperdown.toml` on Linux/macOS, `%APPDATA%\\paperdown\\paperdown.toml` on Windows).
 - Local: the nearest `paperdown.toml` found by walking upward from the current working directory.
 
 Precedence without `--config`: CLI overrides > nearest local `paperdown.toml` > global `paperdown.toml` > built-in defaults.
