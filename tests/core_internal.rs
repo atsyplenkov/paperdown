@@ -1151,8 +1151,9 @@ fn process_pdf_rejects_oversized_pdf_before_env_lookup() {
         .unwrap_err()
         .to_string();
 
+    let canonical_pdf = std::fs::canonicalize(&pdf).unwrap();
     assert!(err.contains("PDF exceeds Z.AI OCR size limit"));
-    assert!(err.contains(&pdf.display().to_string()));
+    assert!(err.contains(&canonical_pdf.display().to_string()));
     assert!(err.contains("52428801 bytes"));
     assert!(err.contains("limit is 52428800 bytes"));
     assert!(err.contains("50 MiB"));
