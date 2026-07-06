@@ -299,16 +299,19 @@ impl From<ConfigLoadError> for ConfigCheckError {
     }
 }
 
+fn config_file_path(config_dir: PathBuf) -> PathBuf {
+    config_dir.join(APP_NAME).join(CONFIG_FILE_NAME)
+}
+
 pub fn global_config_file_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join(APP_NAME).join(CONFIG_FILE_NAME))
+    dirs::config_dir().map(config_file_path)
 }
 
 pub fn default_config_path() -> Result<PathBuf, ConfigPathError> {
     global_config_file_path().ok_or(ConfigPathError::Unavailable)
 }
 
-pub fn init_default_config(force: bool) -> Result<PathBuf, ConfigInitError> {
-    let path = default_config_path()?;
+fn init_config_at(path: PathBuf, force: bool) -> Result<PathBuf, ConfigInitError> {
     let parent = path.parent().ok_or(ConfigPathError::Unavailable)?;
     std::fs::create_dir_all(parent).map_err(|source| ConfigInitError::CreateDir {
         path: parent.to_path_buf(),
@@ -344,6 +347,10 @@ pub fn init_default_config(force: bool) -> Result<PathBuf, ConfigInitError> {
         }
         Err(source) => Err(ConfigInitError::Write { path, source }),
     }
+}
+
+pub fn init_default_config(force: bool) -> Result<PathBuf, ConfigInitError> {
+    init_config_at(default_config_path()?, force)
 }
 
 pub fn check_config_file(explicit: Option<&Path>) -> Result<PathBuf, ConfigCheckError> {
@@ -397,15 +404,18 @@ fn load_file_config(
     load_file_config_with_sources(explicit, cwd).map(|(config, _sources)| config)
 }
 
-fn load_file_config_with_sources(
+fn load_file_config_with_sources_from_config_dir(
     explicit: Option<&Path>,
     cwd: &Path,
+    config_dir: Option<PathBuf>,
 ) -> Result<(ConfigOverrides, Vec<PathBuf>), ConfigLoadError> {
     if let Some(path) = explicit {
         return Ok((load_config_from_path(path)?, vec![path.to_path_buf()]));
     }
 
-    let global = global_config_file_path().filter(|path| path.exists());
+    let global = config_dir
+        .map(config_file_path)
+        .filter(|path| path.exists());
     let local = find_local_config(cwd);
     let mut sources = Vec::new();
     if let Some(path) = global.as_ref() {
@@ -416,6 +426,13 @@ fn load_file_config_with_sources(
     }
     let config = load_discovered_configs(global.as_deref(), local.as_deref())?;
     Ok((config, sources))
+}
+
+fn load_file_config_with_sources(
+    explicit: Option<&Path>,
+    cwd: &Path,
+) -> Result<(ConfigOverrides, Vec<PathBuf>), ConfigLoadError> {
+    load_file_config_with_sources_from_config_dir(explicit, cwd, dirs::config_dir())
 }
 
 pub fn load_effective_config(
@@ -443,44 +460,6 @@ pub fn load_effective_config_with_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
-    use std::path::Path;
-    use std::sync::{LazyLock, Mutex};
-
-    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set_path(key: &'static str, value: &Path) -> Self {
-            let original = std::env::var_os(key);
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(value) = &self.original {
-                    std::env::set_var(self.key, value);
-                } else {
-                    std::env::remove_var(self.key);
-                }
-            }
-        }
-    }
-
-    fn with_xdg_config_home<T>(path: &Path, f: impl FnOnce() -> T) -> T {
-        let _lock = ENV_LOCK.lock().expect("env lock poisoned");
-        let _guard = EnvVarGuard::set_path("XDG_CONFIG_HOME", path);
-        f()
-    }
 
     #[test]
     fn default_config_template_is_valid() {
@@ -508,34 +487,28 @@ mod tests {
     #[test]
     fn init_default_config_refuses_existing_without_force() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let xdg = temp.path().join("xdg");
-        let config_dir = xdg.join(APP_NAME);
-        std::fs::create_dir_all(&config_dir).expect("create config dir");
-        let path = config_dir.join(CONFIG_FILE_NAME);
+        let config_root = temp.path().join("config");
+        let path = config_file_path(config_root);
+        std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
         std::fs::write(&path, "timeout = 9\n").expect("write existing config");
 
-        with_xdg_config_home(&xdg, || {
-            let err = init_default_config(false).expect_err("existing config is refused");
-            match err {
-                ConfigInitError::Exists { path: err_path } => assert_eq!(err_path, path),
-                other => panic!("expected exists error, got {other:?}"),
-            }
-        });
+        let err = init_config_at(path.clone(), false).expect_err("existing config is refused");
+        match err {
+            ConfigInitError::Exists { path: err_path } => assert_eq!(err_path, path),
+            other => panic!("expected exists error, got {other:?}"),
+        }
     }
 
     #[test]
     fn init_default_config_overwrites_with_force() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let xdg = temp.path().join("xdg");
-        let config_dir = xdg.join(APP_NAME);
-        std::fs::create_dir_all(&config_dir).expect("create config dir");
-        let path = config_dir.join(CONFIG_FILE_NAME);
+        let config_root = temp.path().join("config");
+        let path = config_file_path(config_root);
+        std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
         std::fs::write(&path, "timeout = 0\n").expect("write invalid config");
 
-        with_xdg_config_home(&xdg, || {
-            let created = init_default_config(true).expect("force overwrite config");
-            assert_eq!(created, path);
-        });
+        let created = init_config_at(path.clone(), true).expect("force overwrite config");
+        assert_eq!(created, path);
 
         assert_eq!(
             std::fs::read_to_string(&path).expect("read overwritten config"),
@@ -655,8 +628,8 @@ normalize-tables = true
     #[test]
     fn load_effective_config_merges_global_then_local_then_cli() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let xdg = temp.path().join("xdg");
-        let global_dir = xdg.join(APP_NAME);
+        let config_root = temp.path().join("config");
+        let global_dir = config_root.join(APP_NAME);
         std::fs::create_dir_all(&global_dir).expect("create global config dir");
         std::fs::write(
             global_dir.join(CONFIG_FILE_NAME),
@@ -695,9 +668,10 @@ overwrite = false
             ..ConfigOverrides::default()
         };
 
-        let config = with_xdg_config_home(&xdg, || {
-            load_effective_config(None, &cwd, cli).expect("load effective config")
-        });
+        let (file_config, _) =
+            load_file_config_with_sources_from_config_dir(None, &cwd, Some(config_root))
+                .expect("load file config");
+        let config = ResolvedConfig::default().apply(file_config).apply(cli);
 
         assert_eq!(
             config,
@@ -717,8 +691,8 @@ overwrite = false
     #[test]
     fn load_effective_config_with_sources_reports_loaded_files() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let xdg = temp.path().join("xdg");
-        let global_dir = xdg.join(APP_NAME);
+        let config_root = temp.path().join("config");
+        let global_dir = config_root.join(APP_NAME);
         std::fs::create_dir_all(&global_dir).expect("create global config dir");
         let global = global_dir.join(CONFIG_FILE_NAME);
         std::fs::write(&global, "timeout = 9\n").expect("write global config");
@@ -729,10 +703,13 @@ overwrite = false
         let local = project.join(CONFIG_FILE_NAME);
         std::fs::write(&local, "workers = 2\n").expect("write local config");
 
-        let effective = with_xdg_config_home(&xdg, || {
-            load_effective_config_with_sources(None, &cwd, ConfigOverrides::default())
-                .expect("load effective config")
-        });
+        let (file_config, config_files) =
+            load_file_config_with_sources_from_config_dir(None, &cwd, Some(config_root))
+                .expect("load file config");
+        let effective = EffectiveConfig {
+            settings: ResolvedConfig::default().apply(file_config),
+            config_files,
+        };
 
         assert_eq!(effective.config_files, vec![global, local]);
         assert_eq!(effective.settings.timeout, 9);
