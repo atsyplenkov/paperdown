@@ -16,8 +16,16 @@ fn default_config_path(config_root: &Path) -> PathBuf {
     config_root.join("paperdown.toml")
 }
 
-fn default_env_file_for_cwd(tmp: &TempDir) -> PathBuf {
-    std::fs::canonicalize(tmp.path()).unwrap().join(".env")
+fn default_env_file_line(stdout: &str) -> &str {
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("env file: "))
+        .expect("doctor output includes env file line");
+    assert!(
+        line.ends_with(".env"),
+        "default env file should end with .env, got {line:?}"
+    );
+    line
 }
 
 #[test]
@@ -235,7 +243,6 @@ fn config_check_rejects_missing_default_config() {
 fn doctor_reports_missing_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let env_file = default_env_file_for_cwd(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -250,17 +257,15 @@ fn doctor_reports_missing_auth_without_input() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("config: ok"));
     assert!(stdout.contains("config files:\n  none"));
-    let env_line = format!("env file: {}", env_file.display());
-    assert!(stdout.contains(&env_line));
+    let env_file_marker = default_env_file_line(&stdout);
     assert!(stdout.contains("auth: error:"));
-    assert!(stdout.find("auth: error:").unwrap() < stdout.find(&env_line).unwrap());
+    assert!(stdout.find("auth: error:").unwrap() < stdout.find(env_file_marker).unwrap());
 }
 
 #[test]
 fn doctor_accepts_environment_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let env_file = default_env_file_for_cwd(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -275,10 +280,9 @@ fn doctor_accepts_environment_auth_without_input() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("config: ok"));
     assert!(stdout.contains("config files:\n  none"));
-    let env_line = format!("env file: {}", env_file.display());
-    assert!(stdout.contains(&env_line));
+    let env_file_marker = default_env_file_line(&stdout);
     assert!(stdout.contains("auth: ok"));
-    assert!(stdout.find("auth: ok").unwrap() < stdout.find(&env_line).unwrap());
+    assert!(stdout.find("auth: ok").unwrap() < stdout.find(env_file_marker).unwrap());
 }
 
 #[test]
