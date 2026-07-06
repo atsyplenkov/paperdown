@@ -16,6 +16,10 @@ fn default_config_path(config_root: &Path) -> PathBuf {
     config_root.join("paperdown.toml")
 }
 
+fn default_env_file_for_cwd(tmp: &TempDir) -> PathBuf {
+    std::fs::canonicalize(tmp.path()).unwrap().join(".env")
+}
+
 #[test]
 fn cli_reports_missing_input_path() {
     let tmp = TempDir::new().unwrap();
@@ -231,7 +235,7 @@ fn config_check_rejects_missing_default_config() {
 fn doctor_reports_missing_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let env_file = tmp.path().join(".env");
+    let env_file = default_env_file_for_cwd(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -256,7 +260,7 @@ fn doctor_reports_missing_auth_without_input() {
 fn doctor_accepts_environment_auth_without_input() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
-    let env_file = tmp.path().join(".env");
+    let env_file = default_env_file_for_cwd(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
