@@ -1,7 +1,20 @@
+use std::path::{Path, PathBuf};
+
 use assert_cmd::Command;
 use tempfile::TempDir;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
+const TEST_CONFIG_DIR_ENV: &str = "PAPERDOWN_TEST_CONFIG_DIR";
+
+fn test_config_root(tmp: &TempDir) -> PathBuf {
+    let root = tmp.path().join("config-root");
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+fn default_config_path(config_root: &Path) -> PathBuf {
+    config_root.join("paperdown").join("paperdown.toml")
+}
 
 #[test]
 fn cli_reports_missing_input_path() {
@@ -91,14 +104,13 @@ fn invalid_config_reports_parse_error() {
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
     std::fs::write(tmp.path().join("paperdown.toml"), "timeout =").unwrap();
-    let xdg = tmp.path().join("xdg");
-    std::fs::create_dir_all(&xdg).unwrap();
+    let config_root = test_config_root(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .current_dir(tmp.path())
         .args(["--input", pdf.to_str().unwrap()])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .env_remove("ZAI_API_KEY")
         .output()
         .unwrap();
@@ -111,17 +123,17 @@ fn invalid_config_reports_parse_error() {
 #[test]
 fn config_init_writes_default_config() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
+    let config_root = test_config_root(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["config", "init"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
     assert!(output.status.success());
-    let config_path = xdg.join("paperdown").join("paperdown.toml");
+    let config_path = default_config_path(&config_root);
     assert_eq!(
         std::fs::read_to_string(config_path).unwrap(),
         DEFAULT_CONFIG_TEMPLATE
@@ -131,15 +143,15 @@ fn config_init_writes_default_config() {
 #[test]
 fn config_init_refuses_existing_without_force() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
-    let config_dir = xdg.join("paperdown");
+    let config_root = test_config_root(&tmp);
+    let config_dir = config_root.join("paperdown");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("paperdown.toml"), "timeout = 9\n").unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["config", "init"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -151,8 +163,8 @@ fn config_init_refuses_existing_without_force() {
 #[test]
 fn config_init_force_overwrites_existing() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
-    let config_dir = xdg.join("paperdown");
+    let config_root = test_config_root(&tmp);
+    let config_dir = config_root.join("paperdown");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_path = config_dir.join("paperdown.toml");
     std::fs::write(&config_path, "timeout = 0\n").unwrap();
@@ -160,7 +172,7 @@ fn config_init_force_overwrites_existing() {
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["config", "init", "--force"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -191,12 +203,12 @@ fn config_check_accepts_valid_explicit_config() {
 #[test]
 fn config_check_rejects_missing_default_config() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
+    let config_root = test_config_root(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .args(["config", "check"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .output()
         .unwrap();
 
@@ -208,14 +220,14 @@ fn config_check_rejects_missing_default_config() {
 #[test]
 fn doctor_reports_missing_auth_without_input() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
+    let config_root = test_config_root(&tmp);
     let env_file = tmp.path().join(".env");
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .current_dir(tmp.path())
         .args(["doctor"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .env_remove("ZAI_API_KEY")
         .output()
         .unwrap();
@@ -233,14 +245,14 @@ fn doctor_reports_missing_auth_without_input() {
 #[test]
 fn doctor_accepts_environment_auth_without_input() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
+    let config_root = test_config_root(&tmp);
     let env_file = tmp.path().join(".env");
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
         .current_dir(tmp.path())
         .args(["doctor"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .env("ZAI_API_KEY", "test-key")
         .output()
         .unwrap();
@@ -258,7 +270,7 @@ fn doctor_accepts_environment_auth_without_input() {
 #[test]
 fn doctor_reports_explicit_config_and_rebased_env_paths() {
     let tmp = TempDir::new().unwrap();
-    let xdg = tmp.path().join("xdg");
+    let config_root = test_config_root(&tmp);
     let config_dir = tmp.path().join("configs");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config = config_dir.join("paperdown.toml");
@@ -269,7 +281,7 @@ fn doctor_reports_explicit_config_and_rebased_env_paths() {
     let output = cmd
         .current_dir(tmp.path())
         .args(["--config", config.to_str().unwrap(), "doctor"])
-        .env("XDG_CONFIG_HOME", &xdg)
+        .env(TEST_CONFIG_DIR_ENV, &config_root)
         .env("ZAI_API_KEY", "test-key")
         .output()
         .unwrap();

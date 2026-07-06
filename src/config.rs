@@ -305,6 +305,24 @@ fn config_file_path(config_dir: PathBuf) -> PathBuf {
 
 pub fn global_config_file_path() -> Option<PathBuf> {
     dirs::config_dir().map(config_file_path)
+fn configured_config_dir() -> Option<PathBuf> {
+    test_config_dir_override().or_else(dirs::config_dir)
+}
+
+#[cfg(debug_assertions)]
+fn test_config_dir_override() -> Option<PathBuf> {
+    std::env::var_os("PAPERDOWN_TEST_CONFIG_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+#[cfg(not(debug_assertions))]
+fn test_config_dir_override() -> Option<PathBuf> {
+    None
+}
+
+pub fn global_config_file_path() -> Option<PathBuf> {
+    configured_config_dir().map(config_file_path)
 }
 
 pub fn default_config_path() -> Result<PathBuf, ConfigPathError> {
@@ -433,6 +451,7 @@ fn load_file_config_with_sources(
     cwd: &Path,
 ) -> Result<(ConfigOverrides, Vec<PathBuf>), ConfigLoadError> {
     load_file_config_with_sources_from_config_dir(explicit, cwd, dirs::config_dir())
+    load_file_config_with_sources_from_config_dir(explicit, cwd, configured_config_dir())
 }
 
 pub fn load_effective_config(
