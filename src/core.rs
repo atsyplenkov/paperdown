@@ -13,6 +13,7 @@ mod assets;
 mod input;
 mod markdown;
 mod ocr;
+mod okf;
 mod output;
 mod table_normalization;
 
@@ -42,6 +43,7 @@ pub struct ProcessPdfOptions {
     pub max_download_bytes: u64,
     pub overwrite: bool,
     pub normalize_tables: bool,
+    pub okf: bool,
     pub progress: Option<ProgressCallback>,
 }
 
@@ -55,6 +57,7 @@ pub struct PdfSummary {
     pub image_blocks: usize,
     pub usage: Option<Value>,
     pub log_path: String,
+    pub okf_title: Option<String>,
 }
 
 pub async fn process_pdf(
@@ -86,6 +89,7 @@ pub async fn process_pdf_with_ocr_limiter(
         &pdf_path,
         options.overwrite,
         options.normalize_tables,
+        options.okf,
     )?;
     ocr::assert_pdf_size_within_api_limit(&pdf_path)?;
     let client = reqwest::Client::builder()
@@ -122,8 +126,15 @@ pub async fn process_pdf_with_ocr_limiter(
         let tables_dir = prepared
             .tables_dir
             .as_ref()
-            .expect("tables_dir path must be set when normalize_tables is enabled");
+            .expect("tables_dir path must be set when table artifacts are enabled");
         table_normalization::normalize_tables(&markdown, tables_dir).await?
+    } else if options.okf {
+        let tables_dir = prepared
+            .tables_dir
+            .as_ref()
+            .expect("tables_dir path must be set when OKF is enabled");
+        let table_stats = table_normalization::extract_tables_raw(&markdown, tables_dir).await?;
+        (markdown, table_stats)
     } else {
         (markdown, table_normalization::TableStats::default())
     };
@@ -138,13 +149,40 @@ pub async fn process_pdf_with_ocr_limiter(
     output::atomic_write_text(&prepared.markdown_path, &markdown).await?;
     fire(&options.progress, ProgressEvent::MarkdownWriteFinished);
 
+    let timestamp_utc = OffsetDateTime::now_utc().format(&Rfc3339)?;
+    let okf_title = if options.okf {
+        let meta = okf::extract_metadata(&markdown);
+        let title = meta.title.clone().unwrap_or_else(|| prepared.stem.clone());
+        let source_rel = okf::source_relative_to_output(&pdf_path, output_root);
+        let rendered = okf::render_paper_index(
+            &meta,
+            &prepared.stem,
+            &source_rel,
+            &timestamp_utc,
+            downloaded_figures,
+            table_stats.tables_raw_written,
+        );
+        output::atomic_write_text(
+            prepared
+                .paper_index_path
+                .as_ref()
+                .expect("okf index path must be set when OKF is enabled"),
+            &rendered,
+        )
+        .await?;
+        Some(title)
+    } else {
+        None
+    };
+
     output::append_log(
         &prepared.log_path,
         json!({
-            "timestamp_utc": OffsetDateTime::now_utc().format(&Rfc3339)?,
+            "timestamp_utc": timestamp_utc,
             "pdf_path": pdf_path.display().to_string(),
             "output_dir": prepared.output_dir.display().to_string(),
             "markdown_path": prepared.markdown_path.display().to_string(),
+            "okf": options.okf,
             "downloaded_figures": downloaded_figures,
             "remote_figure_links": remote_figure_links,
             "image_blocks": image_blocks,
@@ -177,6 +215,7 @@ pub async fn process_pdf_with_ocr_limiter(
         // Table stats are logged but not surfaced in the summary.
         usage,
         log_path: prepared.log_path.display().to_string(),
+        okf_title,
     })
 }
 
@@ -203,6 +242,21 @@ where
     } else {
         future.await
     }
+}
+
+pub async fn regenerate_okf_root_index(output_root: &Path) -> Result<()> {
+    okf::regenerate_root_index(output_root).await
+}
+
+pub async fn append_okf_root_log(output_root: &Path, entries: &[(String, String)]) -> Result<()> {
+    let entries = entries
+        .iter()
+        .map(|(stem, title)| okf::RootLogEntry {
+            stem: stem.clone(),
+            title: title.clone(),
+        })
+        .collect::<Vec<_>>();
+    okf::append_root_log(output_root, &entries).await
 }
 
 #[cfg(test)]
@@ -275,7 +329,9 @@ pub mod testing {
         pub figures_dir: std::path::PathBuf,
         pub tables_dir: Option<std::path::PathBuf>,
         pub markdown_path: std::path::PathBuf,
+        pub paper_index_path: Option<std::path::PathBuf>,
         pub log_path: std::path::PathBuf,
+        pub stem: String,
     }
 
     pub fn load_api_key(env_file: &Path) -> Result<String> {
@@ -350,19 +406,23 @@ pub mod testing {
         pdf_path: &Path,
         overwrite: bool,
         normalize_tables: bool,
+        okf: bool,
     ) -> Result<PreparedOutputPaths> {
         let prepared = super::output::prepare_output_paths(
             output_root,
             pdf_path,
             overwrite,
             normalize_tables,
+            okf,
         )?;
         Ok(PreparedOutputPaths {
             output_dir: prepared.output_dir,
             figures_dir: prepared.figures_dir,
             tables_dir: prepared.tables_dir,
             markdown_path: prepared.markdown_path,
+            paper_index_path: prepared.paper_index_path,
             log_path: prepared.log_path,
+            stem: prepared.stem,
         })
     }
 

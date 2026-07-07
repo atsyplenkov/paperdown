@@ -43,6 +43,7 @@ fn process_pdf_test_options() -> ProcessPdfOptions {
         max_download_bytes: 1024,
         overwrite: false,
         normalize_tables: false,
+        okf: false,
         progress: None,
     }
 }
@@ -834,7 +835,8 @@ fn prepare_output_without_overwrite_returns_lazy_paths_after_removing_stale_inde
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    let prepared =
+        prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false).unwrap();
     assert_eq!(prepared.markdown_path, target.join("index.md"));
     assert_eq!(prepared.figures_dir, target.join("figures"));
     assert!(!prepared.markdown_path.exists());
@@ -850,7 +852,8 @@ fn prepare_output_without_overwrite_removes_stale_figures_without_recreating_dir
     std::fs::create_dir_all(target.join("figures")).unwrap();
     std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    let prepared =
+        prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false).unwrap();
     assert_eq!(prepared.figures_dir, target.join("figures"));
     assert!(!prepared.figures_dir.exists());
 }
@@ -865,7 +868,8 @@ fn prepare_output_without_overwrite_cleans_index_and_figures_when_log_missing() 
     std::fs::write(target.join("figures").join("stale.png"), b"old").unwrap();
     std::fs::write(target.join("index.md"), b"old").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    let prepared =
+        prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false).unwrap();
     assert!(!prepared.markdown_path.exists());
     assert!(!prepared.figures_dir.exists());
 }
@@ -881,7 +885,7 @@ fn prepare_output_without_overwrite_preserves_completed_output_when_log_exists()
     std::fs::write(target.join("index.md"), b"old").unwrap();
     std::fs::write(target.join("log.jsonl"), b"{}\n").unwrap();
 
-    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false)
+    let err = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("log.jsonl"));
@@ -903,7 +907,7 @@ fn prepare_output_with_overwrite_removes_unrelated_files() {
     std::fs::write(figures.join("stale.png"), b"old").unwrap();
     std::fs::write(out.join("keep.txt"), b"keep").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false, false).unwrap();
     assert!(!prepared.figures_dir.exists());
     assert!(!prepared.figures_dir.join("stale.png").exists());
     assert!(!out.join("keep.txt").exists());
@@ -919,7 +923,7 @@ fn prepare_output_with_overwrite_replaces_output_file_path() {
     std::fs::create_dir_all(tmp.path().join("out")).unwrap();
     std::fs::write(&out_file, b"stale").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false, false).unwrap();
     assert!(prepared.output_dir.is_dir());
     assert!(!prepared.figures_dir.exists());
 }
@@ -933,7 +937,7 @@ fn prepare_output_with_overwrite_handles_figures_file() {
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("figures"), b"stale").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, false, false).unwrap();
     assert!(!prepared.figures_dir.exists());
 }
 
@@ -946,7 +950,7 @@ fn prepare_output_with_normalize_tables_returns_lazy_tables_path_after_overwrite
     std::fs::create_dir_all(out.join("tables")).unwrap();
     std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, true).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, true, true, false).unwrap();
     let tables_dir = prepared.tables_dir.as_ref().unwrap();
     assert_eq!(tables_dir, &out.join("tables"));
     assert!(!tables_dir.exists());
@@ -961,7 +965,7 @@ fn prepare_output_without_overwrite_removes_stale_tables_without_recreating_dire
     std::fs::create_dir_all(out.join("tables")).unwrap();
     std::fs::write(out.join("tables").join("stale.html"), b"old").unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, true).unwrap();
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, true, false).unwrap();
     let tables_dir = prepared.tables_dir.as_ref().unwrap();
     assert_eq!(tables_dir, &out.join("tables"));
     assert!(!tables_dir.exists());
@@ -975,9 +979,33 @@ fn prepare_output_without_overwrite_ignores_stale_tables_when_disabled() {
     let out = tmp.path().join("out").join("paper");
     std::fs::create_dir_all(out.join("tables")).unwrap();
 
-    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false).unwrap();
+    let prepared =
+        prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false).unwrap();
     assert!(prepared.tables_dir.is_none());
     assert!(out.join("tables").is_dir());
+}
+
+#[test]
+fn prepare_output_okf_writes_manuscript_path_and_creates_index_and_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let pdf = tmp.path().join("paper.pdf");
+    std::fs::write(&pdf, b"%PDF").unwrap();
+    let out = tmp.path().join("out").join("paper");
+
+    let prepared = prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, true).unwrap();
+
+    // OKF writes the parsed text to manuscript.md (not index.md).
+    assert_eq!(prepared.markdown_path, out.join("manuscript.md"));
+    // The per-paper metadata index is staged for the OKF renderer.
+    assert_eq!(prepared.paper_index_path, Some(out.join("index.md")));
+    assert_eq!(prepared.stem, "paper");
+    // Every OKF paper dir must contain figures/ and tables/, even when empty.
+    assert!(prepared.figures_dir.is_dir());
+    let tables_dir = prepared
+        .tables_dir
+        .expect("tables dir must be Some in OKF mode");
+    assert!(tables_dir.is_dir());
+    assert_eq!(tables_dir, out.join("tables"));
 }
 
 #[test]
@@ -988,14 +1016,14 @@ fn prepare_output_rejects_unsafe_stems() {
 
     let dot_stem_pdf = tmp.path().join("..pdf");
     std::fs::write(&dot_stem_pdf, b"%PDF").unwrap();
-    let err = prepare_output_paths(&output_root, &dot_stem_pdf, false, false)
+    let err = prepare_output_paths(&output_root, &dot_stem_pdf, false, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("Invalid output stem"));
 
     let dotdot_stem_pdf = tmp.path().join("...pdf");
     std::fs::write(&dotdot_stem_pdf, b"%PDF").unwrap();
-    let err = prepare_output_paths(&output_root, &dotdot_stem_pdf, false, false)
+    let err = prepare_output_paths(&output_root, &dotdot_stem_pdf, false, false, false)
         .unwrap_err()
         .to_string();
     assert!(err.contains("Invalid output stem"));
@@ -1079,6 +1107,7 @@ fn process_pdf_checks_log_conflict_before_env_lookup() {
                 max_download_bytes: 1024,
                 overwrite: false,
                 normalize_tables: false,
+                okf: false,
                 progress: None,
             },
         ))
@@ -1118,6 +1147,7 @@ fn process_pdf_reaches_env_lookup_when_log_missing_despite_stale_outputs() {
                 max_download_bytes: 1024,
                 overwrite: false,
                 normalize_tables: false,
+                okf: false,
                 progress: None,
             },
         ))

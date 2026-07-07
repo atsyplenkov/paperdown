@@ -83,6 +83,113 @@ pub(crate) async fn normalize_tables(
     Ok((out, stats))
 }
 
+pub(crate) async fn extract_tables_raw(markdown: &str, tables_dir: &Path) -> Result<TableStats> {
+    let mut stats = TableStats::default();
+    let mut table_index = 0usize;
+    let mut pos = 0usize;
+
+    while pos < markdown.len() {
+        let line_end_pos = line_end(markdown, pos);
+        let line = &markdown[pos..line_end_pos];
+
+        if let Some((marker, fence_len)) = fence_start(line) {
+            let fence_start_pos = pos;
+            let mut fence_end = line_end_pos;
+            let mut closed = false;
+
+            while fence_end < markdown.len() {
+                let next_end = line_end(markdown, fence_end);
+                let next_line = &markdown[fence_end..next_end];
+                fence_end = next_end;
+                if is_closing_fence_line(next_line, marker, fence_len) {
+                    closed = true;
+                    break;
+                }
+            }
+
+            let block = &markdown[fence_start_pos..fence_end];
+            stats.tables_skipped_in_code += count_case_insensitive_occurrences(block, "<table");
+            pos = fence_end;
+
+            if !closed {
+                break;
+            }
+            continue;
+        }
+
+        let mut chunk_end = line_end_pos;
+        while chunk_end < markdown.len() {
+            let next_end = line_end(markdown, chunk_end);
+            let next_line = &markdown[chunk_end..next_end];
+            if fence_start(next_line).is_some() {
+                break;
+            }
+            chunk_end = next_end;
+        }
+
+        extract_raw_from_non_code_chunk(
+            &markdown[pos..chunk_end],
+            tables_dir,
+            &mut table_index,
+            &mut stats,
+        )
+        .await?;
+        pos = chunk_end;
+    }
+
+    Ok(stats)
+}
+
+async fn extract_raw_from_non_code_chunk(
+    chunk: &str,
+    tables_dir: &Path,
+    table_index: &mut usize,
+    stats: &mut TableStats,
+) -> Result<()> {
+    let mut i = 0usize;
+
+    while i < chunk.len() {
+        if let Some(run_len) = backtick_run_len(chunk, i) {
+            let end = find_matching_backtick_run(chunk, i + run_len, run_len)
+                .map(|offset| offset + run_len)
+                .unwrap_or(chunk.len());
+            let code = &chunk[i..end];
+            stats.tables_skipped_in_code += count_case_insensitive_occurrences(code, "<table");
+            i = end;
+            continue;
+        }
+
+        if starts_tag(chunk, i, "table") {
+            stats.tables_found += 1;
+            *table_index += 1;
+            let ordinal = *table_index;
+            let artifact_name = format!("table_{ordinal:03}.html");
+            let artifact_path = tables_dir.join(&artifact_name);
+
+            match extract_table_span(chunk, i) {
+                TableExtraction::Failed => {
+                    stats.tables_failed_extract += 1;
+                    break;
+                }
+                TableExtraction::Span { html, end, .. } => {
+                    output::atomic_write_text(&artifact_path, &html).await?;
+                    stats.tables_raw_written += 1;
+                    i = end;
+                    continue;
+                }
+            }
+        }
+
+        let ch = chunk[i..]
+            .chars()
+            .next()
+            .ok_or_else(|| anyhow!("invalid markdown boundary"))?;
+        i += ch.len_utf8();
+    }
+
+    Ok(())
+}
+
 async fn rewrite_non_code_chunk(
     chunk: &str,
     tables_dir: &Path,
@@ -793,4 +900,51 @@ enum TableExtraction {
         nested: bool,
     },
     Failed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn extract_tables_raw_writes_real_table_only_and_counts_fenced_table_as_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let tables_dir = tmp.path().join("tables");
+        // One real HTML table, then an HTML table buried in a fenced code block.
+        let markdown = "intro\n<table>\n<tr><th>Sample Name</th><th>Value</th></tr>\n<tr><td>Alpha</td><td>1</td></tr>\n</table>\n```html\n<table><tr><td>fenced</td></tr></table>\n```\n";
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // The pass returns only stats -- it never hands back rewritten markdown, so
+        // the caller's `markdown` binding is provably left untouched by the API shape.
+        let stats = rt
+            .block_on(extract_tables_raw(markdown, &tables_dir))
+            .unwrap();
+
+        // Exactly one artifact: the first real table only, named like normalize_tables.
+        let mut written: Vec<String> = fs::read_dir(&tables_dir)
+            .expect("tables dir should be created lazily")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        written.sort();
+        assert_eq!(written, vec!["table_001.html".to_string()]);
+
+        let html = fs::read_to_string(tables_dir.join("table_001.html")).unwrap();
+        assert!(html.contains("<table>"));
+        assert!(html.contains("Sample Name"));
+        assert!(html.contains("</table>"));
+
+        assert_eq!(stats.tables_found, 1);
+        assert_eq!(stats.tables_raw_written, 1);
+        assert_eq!(stats.tables_skipped_in_code, 1);
+        assert_eq!(stats.tables_normalized, 0);
+        assert_eq!(stats.tables_failed_extract, 0);
+    }
 }

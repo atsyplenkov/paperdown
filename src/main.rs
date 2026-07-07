@@ -56,6 +56,9 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
     if pdfs.len() == 1 {
         if !settings.overwrite && has_existing_log_marker(&args.output, &pdfs[0]) {
             print_single_skip_summary_stdout(&pdfs[0]);
+            if settings.okf && args.output.is_dir() {
+                core::regenerate_okf_root_index(&args.output).await?;
+            }
             return Ok(0);
         }
         if settings.verbose {
@@ -70,11 +73,18 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
                 max_download_bytes: settings.max_download_bytes,
                 overwrite: settings.overwrite,
                 normalize_tables: settings.normalize_tables,
+                okf: settings.okf,
                 progress: progress_callback(&pdfs[0], progress.clone()),
             },
         )
         .await?;
         print_single_summary_stdout(&summary);
+        if settings.okf {
+            let stem = pdf_stem_for_output(&pdfs[0]);
+            let title = summary.okf_title.clone().unwrap_or_else(|| stem.clone());
+            core::append_okf_root_log(&args.output, &[(stem, title)]).await?;
+            core::regenerate_okf_root_index(&args.output).await?;
+        }
         return Ok(0);
     }
 
@@ -97,6 +107,9 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
             counts.failed,
             counts.figures,
         );
+        if settings.okf && args.output.is_dir() {
+            core::regenerate_okf_root_index(&args.output).await?;
+        }
         return Ok(0);
     }
 
@@ -122,6 +135,7 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
             max_download_bytes: settings.max_download_bytes,
             overwrite: settings.overwrite,
             normalize_tables: settings.normalize_tables,
+            okf: settings.okf,
             progress: progress_callback(&pdf, progress),
         };
         async move {
@@ -144,11 +158,17 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
     let mut failed_count = 0usize;
     let mut success_count = 0usize;
     let mut downloaded_figures = 0usize;
+    let mut okf_log_entries = Vec::new();
     for (pdf, result) in results {
         match result {
             Ok(summary) => {
                 success_count += 1;
                 downloaded_figures += summary.downloaded_figures;
+                if settings.okf {
+                    let stem = pdf_stem_for_output(&pdf);
+                    let title = summary.okf_title.clone().unwrap_or_else(|| stem.clone());
+                    okf_log_entries.push((stem, title));
+                }
                 if settings.verbose {
                     eprintln!("  done: {}", pdf.display());
                 }
@@ -174,6 +194,10 @@ async fn run_pdf_processing(args: cli::Cli, cwd: &Path) -> Result<i32> {
         counts.failed,
         counts.figures,
     );
+    if settings.okf {
+        core::append_okf_root_log(&args.output, &okf_log_entries).await?;
+        core::regenerate_okf_root_index(&args.output).await?;
+    }
     Ok(if counts.failed > 0 { 1 } else { 0 })
 }
 
@@ -270,6 +294,12 @@ fn format_error_for_stderr(message: &str) -> String {
 
 fn stdout_is_tty() -> bool {
     std::io::stdout().is_terminal()
+}
+
+fn pdf_stem_for_output(pdf: &Path) -> String {
+    pdf.file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn has_existing_log_marker(output_root: &Path, pdf: &Path) -> bool {
@@ -472,6 +502,7 @@ mod tests {
             image_blocks: 3,
             usage: None,
             log_path: "/tmp/out/paper/log.jsonl".to_string(),
+            okf_title: None,
         };
         print_single_summary_stdout(&summary);
         print_single_skip_summary_stdout(Path::new(&summary.pdf));

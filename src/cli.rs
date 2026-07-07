@@ -54,6 +54,9 @@ Options:
   -n, --normalize-tables
           Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
 
+  --okf
+          Structure output as an Open Knowledge Format (OKF) bundle (manuscript.md, index.md with metadata, root index.md and log.md).
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -215,6 +218,12 @@ pub struct Cli {
         help = "Normalize OCR HTML tables into Markdown and store raw HTML under tables/."
     )]
     pub normalize_tables: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Structure output as an Open Knowledge Format (OKF) bundle (manuscript.md, index.md with metadata, root index.md and log.md)."
+    )]
+    pub okf: bool,
 
     #[command(subcommand)]
     pub command: Option<CliCommand>,
@@ -302,6 +311,7 @@ impl Cli {
             verbose: bool_override(self.verbose, self.quiet),
             overwrite: bool_override(self.overwrite, false),
             normalize_tables: bool_override(self.normalize_tables, false),
+            okf: bool_override(self.okf, false),
         }
     }
 }
@@ -348,6 +358,7 @@ mod tests {
             "--verbose",
             "--overwrite",
             "--normalize-tables",
+            "--okf",
         ]);
 
         assert_eq!(
@@ -361,6 +372,7 @@ mod tests {
                 verbose: Some(true),
                 overwrite: Some(true),
                 normalize_tables: Some(true),
+                okf: Some(true),
             }
         );
     }
@@ -396,5 +408,15 @@ mod tests {
             Cli::try_parse_from(["paperdown", "--input", "in.pdf", "--ocr-workers", "0"]).is_err()
         );
         assert!(Cli::try_parse_from(["paperdown", "-i", "in.pdf", "-e", ".env", "-n"]).is_ok());
+    }
+
+    #[test]
+    fn cli_parses_okf_flag() {
+        // Parsed on its own (without --normalize-tables) so a cross-wiring bug in
+        // config_overrides() -- e.g. okf bound to the normalize_tables field --
+        // would be caught here even though the bundled overrides test still passes.
+        let cli = Cli::parse_from(["paperdown", "--input", "in.pdf", "--okf"]);
+
+        assert_eq!(cli.config_overrides().okf, Some(true));
     }
 }

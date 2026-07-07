@@ -11,7 +11,9 @@ pub(crate) struct PreparedOutput {
     pub(crate) figures_dir: PathBuf,
     pub(crate) tables_dir: Option<PathBuf>,
     pub(crate) markdown_path: PathBuf,
+    pub(crate) paper_index_path: Option<PathBuf>,
     pub(crate) log_path: PathBuf,
+    pub(crate) stem: String,
 }
 
 fn remove_path_if_exists(path: &Path) -> Result<()> {
@@ -41,6 +43,7 @@ pub(crate) fn prepare_output_paths(
     pdf_path: &Path,
     overwrite: bool,
     normalize_tables: bool,
+    okf: bool,
 ) -> Result<PreparedOutput> {
     let stem = pdf_path
         .file_stem()
@@ -54,9 +57,14 @@ pub(crate) fn prepare_output_paths(
     }
     std::fs::create_dir_all(&output_dir)?;
 
-    let markdown_path = output_dir.join("index.md");
+    let markdown_path = if okf {
+        output_dir.join("manuscript.md")
+    } else {
+        output_dir.join("index.md")
+    };
+    let paper_index_path = okf.then(|| output_dir.join("index.md"));
     let figures_dir = output_dir.join("figures");
-    let tables_dir = output_dir.join("tables");
+    let tables_path = output_dir.join("tables");
     let log_path = output_dir.join("log.jsonl");
 
     if !overwrite {
@@ -67,20 +75,31 @@ pub(crate) fn prepare_output_paths(
             ));
         }
         remove_path_if_exists(&markdown_path)?;
+        if let Some(paper_index_path) = paper_index_path.as_ref() {
+            remove_path_if_exists(paper_index_path)?;
+        }
         remove_path_if_exists(&figures_dir)?;
-        if normalize_tables {
-            remove_path_if_exists(&tables_dir)?;
+        if normalize_tables || okf {
+            remove_path_if_exists(&tables_path)?;
         }
     }
 
-    let tables_dir = normalize_tables.then_some(tables_dir);
+    let tables_dir = (normalize_tables || okf).then_some(tables_path);
+    if okf {
+        std::fs::create_dir_all(&figures_dir)?;
+        if let Some(tables_dir) = tables_dir.as_ref() {
+            std::fs::create_dir_all(tables_dir)?;
+        }
+    }
 
     Ok(PreparedOutput {
         output_dir,
         figures_dir,
         tables_dir,
         markdown_path,
+        paper_index_path,
         log_path,
+        stem: stem.to_string(),
     })
 }
 

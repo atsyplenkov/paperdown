@@ -15,6 +15,9 @@ Possible sections are:
 
 ## [Unreleased]
 
+### Added:
+- add `--okf` output mode for Open Knowledge Format bundles with per-paper `manuscript.md`, metadata `index.md`, root `index.md`, and root `log.md` artifacts ([#16](https://github.com/atsyplenkov/paperdown/issues/16))
+
 ### Fixed:
 - create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written ([#15](https://github.com/atsyplenkov/paperdown/issues/15))
 - reject PDFs over the Z.AI OCR 50 MiB size limit before API or env-file work ([#9](https://github.com/atsyplenkov/paperdown/issues/9))

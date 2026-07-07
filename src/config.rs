@@ -15,6 +15,7 @@ pub struct ResolvedConfig {
     pub verbose: bool,
     pub overwrite: bool,
     pub normalize_tables: bool,
+    pub okf: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,7 @@ impl Default for ResolvedConfig {
             verbose: false,
             overwrite: false,
             normalize_tables: false,
+            okf: false,
         }
     }
 }
@@ -64,6 +66,9 @@ impl ResolvedConfig {
         if let Some(value) = overrides.normalize_tables {
             self.normalize_tables = value;
         }
+        if let Some(value) = overrides.okf {
+            self.okf = value;
+        }
         self
     }
 }
@@ -74,7 +79,7 @@ pub const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 20_971_520;
 pub const DEFAULT_WORKERS: usize = 32;
 pub const DEFAULT_OCR_WORKERS: usize = 2;
 
-pub const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
+pub const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\nokf = false\n";
 
 #[derive(Debug, Clone, Default, serde::Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
@@ -87,6 +92,7 @@ pub struct ConfigOverrides {
     pub verbose: Option<bool>,
     pub overwrite: Option<bool>,
     pub normalize_tables: Option<bool>,
+    pub okf: Option<bool>,
 }
 
 impl ConfigOverrides {
@@ -100,6 +106,7 @@ impl ConfigOverrides {
             verbose: higher.verbose.or(self.verbose),
             overwrite: higher.overwrite.or(self.overwrite),
             normalize_tables: higher.normalize_tables.or(self.normalize_tables),
+            okf: higher.okf.or(self.okf),
         }
     }
 
@@ -492,6 +499,7 @@ mod tests {
                 verbose: Some(false),
                 overwrite: Some(false),
                 normalize_tables: Some(false),
+                okf: Some(false),
             }
         );
     }
@@ -654,6 +662,7 @@ ocr-workers = 5
 verbose = true
 overwrite = true
 normalize-tables = true
+okf = true
 "#,
         )
         .expect("write global config");
@@ -677,6 +686,7 @@ overwrite = false
             max_download_bytes: Some(1_100),
             verbose: Some(false),
             normalize_tables: Some(false),
+            okf: Some(false),
             ..ConfigOverrides::default()
         };
 
@@ -696,6 +706,7 @@ overwrite = false
                 verbose: false,
                 overwrite: false,
                 normalize_tables: false,
+                okf: false,
             }
         );
     }
@@ -751,6 +762,7 @@ ocr-workers = 4
 verbose = true
 overwrite = true
 normalize-tables = true
+okf = true
 "#,
         )
         .expect("write explicit config");
@@ -776,6 +788,7 @@ normalize-tables = true
                 verbose: false,
                 overwrite: false,
                 normalize_tables: true,
+                okf: true,
             }
         );
     }

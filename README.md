@@ -52,6 +52,8 @@ paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 
 Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. If the log marker is missing, `paperdown` treats the PDF as unprocessed and refreshes managed artifacts (`index.md`, `figures/`, and `tables/` when `--normalize-tables` is enabled). With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
 
+OKF output: pass `--okf` to structure each paper directory as an Open Knowledge Format bundle. In OKF mode `<output>/<pdf_stem>/manuscript.md` contains the parsed manuscript text, `<output>/<pdf_stem>/index.md` contains metadata frontmatter plus a directory map, and `figures/` and `tables/` are always present. The output root also gets a regenerated `index.md` listing all paper bundles and an append-only `log.md` update history.
+
 ## Installation
 
 Install from crates.io:
@@ -121,6 +123,9 @@ Options:
   -n, --normalize-tables
           Normalize OCR HTML tables into Markdown and store raw HTML under tables/.
 
+  --okf
+          Structure output as an Open Knowledge Format (OKF) bundle (manuscript.md, index.md with metadata, root index.md and log.md).
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -130,7 +135,7 @@ Options:
 
 ## Configuration
 
-`paperdown` can read shared defaults from `paperdown.toml`. Runtime settings such as API key file, timeouts, worker counts, verbosity, overwrite behavior, and table normalization can be configured. `--input`, `--output`, and `--config` stay CLI-only so each run still names the source PDFs, output root, and config source explicitly.
+`paperdown` can read shared defaults from `paperdown.toml`. Runtime settings such as API key file, timeouts, worker counts, verbosity, overwrite behavior, table normalization, and OKF output can be configured. `--input`, `--output`, and `--config` stay CLI-only so each run still names the source PDFs, output root, and config source explicitly.
 
 Default config locations:
 
@@ -152,6 +157,7 @@ ocr-workers = 2
 verbose = false
 overwrite = false
 normalize-tables = false
+okf = false
 ```
 
 Relative `env-file` values in TOML are resolved relative to the TOML file directory. CLI `--env` paths keep normal current-working-directory behavior.

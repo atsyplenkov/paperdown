@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\n";
+const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\nokf = false\n";
 const TEST_CONFIG_DIR_ENV: &str = "PAPERDOWN_CONFIG_DIR";
 
 fn test_config_root(tmp: &TempDir) -> PathBuf {
