@@ -656,7 +656,7 @@ fn localize_figures_rewrites_markdown_and_tracks_progress() {
         .build()
         .unwrap();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let (rewritten, downloaded, remote_links, image_blocks) = rt
+    let (rewritten, downloaded, remote_links, image_blocks, replacements) = rt
         .block_on(localize_figures(
             markdown,
             &layout_details,
@@ -674,6 +674,12 @@ fn localize_figures_rewrites_markdown_and_tracks_progress() {
     assert_eq!(image_blocks, 3);
     assert!(rewritten.contains("figures/fig-001-001.png"));
     assert!(rewritten.contains("figures/fig-002-001.jpg"));
+    assert_eq!(
+        replacements
+            .get(&server.url("/a"))
+            .map(std::string::String::as_str),
+        Some("figures/fig-001-001.png")
+    );
     assert!(tmp.path().join("fig-001-001.png").exists());
     assert!(tmp.path().join("fig-002-001.jpg").exists());
 
@@ -839,6 +845,8 @@ fn prepare_output_without_overwrite_returns_lazy_paths_after_removing_stale_inde
         prepare_output_paths(&tmp.path().join("out"), &pdf, false, false, false).unwrap();
     assert_eq!(prepared.markdown_path, target.join("index.md"));
     assert_eq!(prepared.figures_dir, target.join("figures"));
+    // The OKF layout sidecar is not staged in non-OKF mode.
+    assert_eq!(prepared.layout_path, None);
     assert!(!prepared.markdown_path.exists());
     assert!(!prepared.figures_dir.exists());
 }
@@ -998,6 +1006,8 @@ fn prepare_output_okf_writes_manuscript_path_and_creates_index_and_dirs() {
     assert_eq!(prepared.markdown_path, out.join("manuscript.md"));
     // The per-paper metadata index is staged for the OKF renderer.
     assert_eq!(prepared.paper_index_path, Some(out.join("index.md")));
+    // The OKF layout sidecar path is staged for the renderer.
+    assert_eq!(prepared.layout_path, Some(out.join("layout.json")));
     assert_eq!(prepared.stem, "paper");
     // Every OKF paper dir must contain figures/ and tables/, even when empty.
     assert!(prepared.figures_dir.is_dir());

@@ -17,6 +17,7 @@ Possible sections are:
 
 ### Added:
 - add `--okf` output mode for Open Knowledge Format bundles with per-paper `manuscript.md`, metadata `index.md`, root `index.md`, and root `log.md` artifacts ([#16](https://github.com/atsyplenkov/paperdown/issues/16))
+- add `layout.json` OCR layout sidecar in OKF bundles with figure/table artifact links; document LaTeX formula preservation
 
 ### Fixed:
 - create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written ([#15](https://github.com/atsyplenkov/paperdown/issues/15))

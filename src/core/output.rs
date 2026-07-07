@@ -12,6 +12,7 @@ pub(crate) struct PreparedOutput {
     pub(crate) tables_dir: Option<PathBuf>,
     pub(crate) markdown_path: PathBuf,
     pub(crate) paper_index_path: Option<PathBuf>,
+    pub(crate) layout_path: Option<PathBuf>,
     pub(crate) log_path: PathBuf,
     pub(crate) stem: String,
 }
@@ -63,6 +64,7 @@ pub(crate) fn prepare_output_paths(
         output_dir.join("index.md")
     };
     let paper_index_path = okf.then(|| output_dir.join("index.md"));
+    let layout_path = okf.then(|| output_dir.join("layout.json"));
     let figures_dir = output_dir.join("figures");
     let tables_path = output_dir.join("tables");
     let log_path = output_dir.join("log.jsonl");
@@ -77,6 +79,9 @@ pub(crate) fn prepare_output_paths(
         remove_path_if_exists(&markdown_path)?;
         if let Some(paper_index_path) = paper_index_path.as_ref() {
             remove_path_if_exists(paper_index_path)?;
+        }
+        if let Some(layout_path) = layout_path.as_ref() {
+            remove_path_if_exists(layout_path)?;
         }
         remove_path_if_exists(&figures_dir)?;
         if normalize_tables || okf {
@@ -98,6 +103,7 @@ pub(crate) fn prepare_output_paths(
         tables_dir,
         markdown_path,
         paper_index_path,
+        layout_path,
         log_path,
         stem: stem.to_string(),
     })

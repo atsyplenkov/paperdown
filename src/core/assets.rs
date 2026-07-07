@@ -17,7 +17,7 @@ pub(crate) async fn localize_figures(
     figures_dir: &Path,
     max_download_bytes: u64,
     progress: Option<ProgressCallback>,
-) -> Result<(String, usize, usize, usize)> {
+) -> Result<(String, usize, usize, usize, HashMap<String, String>)> {
     let mut remote_figure_links = 0usize;
     let mut image_blocks = 0usize;
     let mut first_url_order: Vec<(String, String)> = Vec::new();
@@ -88,6 +88,7 @@ pub(crate) async fn localize_figures(
         downloaded_figures,
         remote_figure_links,
         image_blocks,
+        replacements,
     ))
 }
 

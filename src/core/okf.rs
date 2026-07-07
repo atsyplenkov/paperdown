@@ -73,6 +73,7 @@ pub(crate) fn render_paper_index(
     out.push_str(&format!(
         "* [tables/](tables/) - {tables_count} extracted table artifact(s).\n"
     ));
+    out.push_str("* [layout.json](layout.json) - OCR layout regions (labels, bounding boxes, artifact links).\n");
     out
 }
 
@@ -587,6 +588,7 @@ timestamp: 2024-01-01T00:00:00Z
 * [Manuscript](manuscript.md) - Full parsed text of the manuscript.
 * [figures/](figures/) - 3 downloaded figure file(s).
 * [tables/](tables/) - 1 extracted table artifact(s).
+* [layout.json](layout.json) - OCR layout regions (labels, bounding boxes, artifact links).
 ";
         assert_eq!(rendered, expected);
     }
@@ -615,6 +617,7 @@ timestamp: 2024-01-01T00:00:00Z
 * [Manuscript](manuscript.md) - Full parsed text of the manuscript.
 * [figures/](figures/) - 0 downloaded figure file(s).
 * [tables/](tables/) - 0 extracted table artifact(s).
+* [layout.json](layout.json) - OCR layout regions (labels, bounding boxes, artifact links).
 ";
         assert_eq!(rendered, expected);
     }

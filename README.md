@@ -52,7 +52,7 @@ paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 
 Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. If the log marker is missing, `paperdown` treats the PDF as unprocessed and refreshes managed artifacts (`index.md`, `figures/`, and `tables/` when `--normalize-tables` is enabled). With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
 
-OKF output: pass `--okf` to structure each paper directory as an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. In OKF mode `<output>/<pdf_stem>/manuscript.md` contains the parsed manuscript text, `<output>/<pdf_stem>/index.md` contains metadata frontmatter plus a directory map, and `figures/` and `tables/` are always present. The output root also gets a regenerated `index.md` listing all paper bundles and an append-only `log.md` update history.
+OKF output: pass `--okf` to structure each paper directory as an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. In OKF mode `<output>/<pdf_stem>/manuscript.md` contains the parsed manuscript text, `<output>/<pdf_stem>/index.md` contains metadata frontmatter plus a directory map, `<output>/<pdf_stem>/layout.json` contains OCR layout regions, and `figures/` and `tables/` are always present. The output root also gets a regenerated `index.md` listing all paper bundles and an append-only `log.md` update history.
 
 ### Table formats and LLM readability
 
@@ -63,6 +63,14 @@ GLM-OCR returns tables as HTML (`<table>...</table>`), not markdown, and `paperd
 Plain markdown pipe-tables are intentionally not offered: they benchmark no better than HTML for LLM comprehension and cannot represent merged cells at all.
 
 Practical guidance: keep the default (inline HTML) when you want a faithful, lossless transcript of the paper; add `--normalize-tables` when the markdown is destined for LLM consumption (RAG, agents) and per-row lookup accuracy matters more than token count. Both compose with `--okf`; with `--okf` alone, raw HTML artifacts are still extracted to `tables/` while the manuscript keeps the inline HTML unchanged.
+
+### Formulas
+
+GLM-OCR returns formulas as LaTeX. `paperdown` preserves that LaTeX verbatim in `manuscript.md` and in `layout.json` region content; it does not convert formulas to Unicode or plain text. Keeping the original LaTeX leaves mathematical structure recoverable for agents and downstream parsers.
+
+### OCR layout regions (OKF)
+
+With `--okf`, each paper bundle includes `layout.json`, a per-page sidecar with schema `paperdown.layout.v1`. Each region records its OCR label, bounding box, raw content, and an artifact link when one can be resolved. Image regions link to downloaded files under `figures/`; table regions link to `tables/table_NNN.html` when the table-region count matches the number of extracted table artifacts. If those counts disagree, table linking is skipped and `table_artifact_match` is `"none"`.
 
 ## Installation
 

@@ -11,6 +11,7 @@ use tokio::sync::Semaphore;
 
 mod assets;
 mod input;
+mod layout;
 mod markdown;
 mod ocr;
 mod okf;
@@ -110,7 +111,7 @@ pub async fn process_pdf_with_ocr_limiter(
     let (markdown, layout_details, usage) = ocr::validate_layout_response(response)?;
 
     let figure_started = Instant::now();
-    let (markdown, downloaded_figures, remote_figure_links, image_blocks) =
+    let (markdown, downloaded_figures, remote_figure_links, image_blocks, figure_replacements) =
         assets::localize_figures(
             markdown,
             &layout_details,
@@ -170,6 +171,20 @@ pub async fn process_pdf_with_ocr_limiter(
             &rendered,
         )
         .await?;
+        let layout_json = layout::render_layout_json(
+            &layout_details,
+            &figure_replacements,
+            table_stats.tables_raw_written,
+            &source_rel,
+        )?;
+        output::atomic_write_text(
+            prepared
+                .layout_path
+                .as_ref()
+                .expect("layout path must be set when OKF is enabled"),
+            &layout_json,
+        )
+        .await?;
         Some(title)
     } else {
         None
@@ -182,6 +197,7 @@ pub async fn process_pdf_with_ocr_limiter(
             "pdf_path": pdf_path.display().to_string(),
             "output_dir": prepared.output_dir.display().to_string(),
             "markdown_path": prepared.markdown_path.display().to_string(),
+            "layout_path": prepared.layout_path.as_ref().map(|path| path.display().to_string()),
             "okf": options.okf,
             "downloaded_figures": downloaded_figures,
             "remote_figure_links": remote_figure_links,
@@ -330,6 +346,7 @@ pub mod testing {
         pub tables_dir: Option<std::path::PathBuf>,
         pub markdown_path: std::path::PathBuf,
         pub paper_index_path: Option<std::path::PathBuf>,
+        pub layout_path: Option<std::path::PathBuf>,
         pub log_path: std::path::PathBuf,
         pub stem: String,
     }
@@ -381,7 +398,7 @@ pub mod testing {
         figures_dir: &Path,
         max_download_bytes: u64,
         progress: Option<ProgressCallback>,
-    ) -> Result<(String, usize, usize, usize)> {
+    ) -> Result<(String, usize, usize, usize, HashMap<String, String>)> {
         super::assets::localize_figures(
             markdown,
             layout_details,
@@ -421,6 +438,7 @@ pub mod testing {
             tables_dir: prepared.tables_dir,
             markdown_path: prepared.markdown_path,
             paper_index_path: prepared.paper_index_path,
+            layout_path: prepared.layout_path,
             log_path: prepared.log_path,
             stem: prepared.stem,
         })
