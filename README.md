@@ -52,7 +52,17 @@ paperdown --input pdf/ --output md/ --workers 32 --ocr-workers 2 --overwrite
 
 Without `--overwrite`, an existing `<output>/<pdf_stem>/log.jsonl` marker skips the PDF. If the log marker is missing, `paperdown` treats the PDF as unprocessed and refreshes managed artifacts (`index.md`, `figures/`, and `tables/` when `--normalize-tables` is enabled). With `--overwrite`, `paperdown` replaces the whole `<output>/<pdf_stem>/` folder before processing.
 
-OKF output: pass `--okf` to structure each paper directory as an Open Knowledge Format bundle. In OKF mode `<output>/<pdf_stem>/manuscript.md` contains the parsed manuscript text, `<output>/<pdf_stem>/index.md` contains metadata frontmatter plus a directory map, and `figures/` and `tables/` are always present. The output root also gets a regenerated `index.md` listing all paper bundles and an append-only `log.md` update history.
+OKF output: pass `--okf` to structure each paper directory as an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. In OKF mode `<output>/<pdf_stem>/manuscript.md` contains the parsed manuscript text, `<output>/<pdf_stem>/index.md` contains metadata frontmatter plus a directory map, and `figures/` and `tables/` are always present. The output root also gets a regenerated `index.md` listing all paper bundles and an append-only `log.md` update history.
+
+### Table formats and LLM readability
+
+GLM-OCR returns tables as HTML (`<table>...</table>`), not markdown, and `paperdown` keeps that HTML inline by default. This is deliberate: HTML is the only format of the three discussed here that losslessly preserves merged cells (`rowspan`/`colspan`), which scientific papers use heavily, and cross-format benchmarks ([TabVerse](https://arxiv.org/abs/2606.09578), [Table Meets LLM](https://arxiv.org/abs/2305.13062)) find HTML to be among the most robust text representations for LLM table understanding -- likely because of how much HTML markup LLMs see during pretraining. The cost is tokens: HTML uses roughly 3x the tokens of an equivalent markdown table.
+
+`--normalize-tables` rewrites each inline table into a record-per-row format (`Row: {"column": "value", ...}`) with column names repeated on every row, and stores the untouched OCR HTML under `tables/`. This record style closely matches the key-value formats that score highest in format-comparison benchmarks ([Which Table Format Do LLMs Understand Best?](https://www.improvingagents.com/blog/best-input-data-format-for-llms/)): repeating the keys on every row means an LLM never has to count columns to associate a value with its header, which is where pipe-tables and CSV degrade on wide or long tables. Tables that are too large or contain nested tables are left as a placeholder pointing at the raw HTML artifact instead of being rewritten.
+
+Plain markdown pipe-tables are intentionally not offered: they benchmark no better than HTML for LLM comprehension and cannot represent merged cells at all.
+
+Practical guidance: keep the default (inline HTML) when you want a faithful, lossless transcript of the paper; add `--normalize-tables` when the markdown is destined for LLM consumption (RAG, agents) and per-row lookup accuracy matters more than token count. Both compose with `--okf`; with `--okf` alone, raw HTML artifacts are still extracted to `tables/` while the manuscript keeps the inline HTML unchanged.
 
 ## Installation
 
