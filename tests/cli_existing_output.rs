@@ -4,8 +4,10 @@ use std::fs;
 #[test]
 fn batch_without_log_marker_reaches_env_lookup_even_with_stale_outputs() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let config_root = temp.path().join("config");
     let pdf_dir = temp.path().join("pdf");
     let out_dir = temp.path().join("md");
+    fs::create_dir_all(&config_root).expect("config dir");
     fs::create_dir_all(&pdf_dir).expect("pdf dir");
 
     let pdf_a = pdf_dir.join("a.pdf");
@@ -36,6 +38,7 @@ fn batch_without_log_marker_reaches_env_lookup_even_with_stale_outputs() {
             "--env",
             missing_env.to_str().expect("env path"),
         ])
+        .env("PAPERDOWN_CONFIG_DIR", &config_root)
         .env_remove("ZAI_API_KEY")
         .output()
         .expect("run");
@@ -61,8 +64,10 @@ fn batch_without_log_marker_reaches_env_lookup_even_with_stale_outputs() {
 #[test]
 fn batch_existing_log_outputs_skip_without_env_or_ocr() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let config_root = temp.path().join("config");
     let pdf_dir = temp.path().join("pdf");
     let out_dir = temp.path().join("output");
+    fs::create_dir_all(&config_root).expect("config dir");
     fs::create_dir_all(&pdf_dir).expect("pdf dir");
     fs::create_dir_all(&out_dir).expect("output dir");
 
@@ -84,12 +89,13 @@ fn batch_existing_log_outputs_skip_without_env_or_ocr() {
             "--input",
             pdf_dir.to_str().expect("pdf path"),
             "--output",
-            out_dir.to_str().expect("out path"),
+            out_dir.to_str().expect("output path"),
             "--workers",
             "2",
             "--env",
             missing_env.to_str().expect("env path"),
         ])
+        .env("PAPERDOWN_CONFIG_DIR", &config_root)
         .env_remove("ZAI_API_KEY")
         .output()
         .expect("run");

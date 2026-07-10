@@ -4,8 +4,10 @@ use std::fs;
 #[test]
 fn okf_skip_path_regenerates_root_index_from_existing_paper_dirs() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let config_root = temp.path().join("config");
     let pdf_dir = temp.path().join("pdf");
     let out_dir = temp.path().join("out");
+    fs::create_dir_all(&config_root).expect("config dir");
     fs::create_dir_all(&pdf_dir).expect("pdf dir");
     fs::create_dir_all(&out_dir).expect("out dir");
 
@@ -54,6 +56,7 @@ fn okf_skip_path_regenerates_root_index_from_existing_paper_dirs() {
             "--env",
             missing_env.to_str().expect("env path"),
         ])
+        .env("PAPERDOWN_CONFIG_DIR", &config_root)
         .env_remove("ZAI_API_KEY")
         .output()
         .expect("run");

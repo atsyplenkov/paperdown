@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use paperdown::config::DEFAULT_CONFIG_TEMPLATE;
 use tempfile::TempDir;
 
-const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\nokf = false\n";
 const TEST_CONFIG_DIR_ENV: &str = "PAPERDOWN_CONFIG_DIR";
 
 fn test_config_root(tmp: &TempDir) -> PathBuf {
@@ -123,7 +123,7 @@ fn invalid_config_reports_parse_error() {
     let tmp = TempDir::new().unwrap();
     let pdf = tmp.path().join("paper.pdf");
     std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
-    std::fs::write(tmp.path().join("paperdown.toml"), "timeout =").unwrap();
+    std::fs::write(tmp.path().join("paperdown.toml"), "[connection]\ntimeout =").unwrap();
     let config_root = test_config_root(&tmp);
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
@@ -166,7 +166,11 @@ fn config_init_refuses_existing_without_force() {
     let config_root = test_config_root(&tmp);
     let config_dir = config_root.clone();
     std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(config_dir.join("paperdown.toml"), "timeout = 9\n").unwrap();
+    std::fs::write(
+        config_dir.join("paperdown.toml"),
+        "[connection]\ntimeout = 9\n",
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -187,7 +191,7 @@ fn config_init_force_overwrites_existing() {
     let config_dir = config_root.clone();
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_path = config_dir.join("paperdown.toml");
-    std::fs::write(&config_path, "timeout = 0\n").unwrap();
+    std::fs::write(&config_path, "[connection]\ntimeout = 0\n").unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -208,7 +212,7 @@ fn config_check_accepts_valid_explicit_config() {
     let tmp = TempDir::new().unwrap();
     let config_root = test_config_root(&tmp);
     let config = tmp.path().join("paperdown.toml");
-    std::fs::write(&config, "timeout = 9\n").unwrap();
+    std::fs::write(&config, "[connection]\ntimeout = 9\n").unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
@@ -293,7 +297,7 @@ fn doctor_reports_explicit_config_and_rebased_env_paths() {
     std::fs::create_dir_all(&config_dir).unwrap();
     let config = config_dir.join("paperdown.toml");
     let env_file = config_dir.join("custom.env");
-    std::fs::write(&config, "env-file = \"custom.env\"\n").unwrap();
+    std::fs::write(&config, "[auth]\nenv-file = \"custom.env\"\n").unwrap();
 
     let mut cmd = Command::cargo_bin("paperdown").unwrap();
     let output = cmd
