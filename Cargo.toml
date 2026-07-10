@@ -24,6 +24,7 @@ strip = "symbols"
 default = []
 net-tests = []
 internal-testing = []
+schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow = "1"
@@ -36,6 +37,7 @@ dotenvy = "0.15"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 serde = { version = "1", features = ["derive"] }
+schemars = { version = "1", optional = true }
 serde_json = "1"
 toml = "1.1"
 time = { version = "0.3", features = ["formatting"] }
@@ -46,3 +48,4 @@ url = "2"
 tempfile = "3"
 assert_cmd = "2"
 httpmock = "0.7"
+jsonschema = { version = "0.33", default-features = false }

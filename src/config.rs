@@ -79,10 +79,23 @@ pub const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 20_971_520;
 pub const DEFAULT_WORKERS: usize = 32;
 pub const DEFAULT_OCR_WORKERS: usize = 2;
 
-pub const DEFAULT_CONFIG_TEMPLATE: &str = "env-file = \".env\"\ntimeout = 180\nmax-download-bytes = 20971520\nworkers = 32\nocr-workers = 2\nverbose = false\noverwrite = false\nnormalize-tables = false\nokf = false\n";
+pub const DEFAULT_CONFIG_TEMPLATE: &str = "[general]
+verbose = false
+overwrite = false
+normalize-tables = false
+okf = false
 
-#[derive(Debug, Clone, Default, serde::Deserialize, PartialEq, Eq)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+[auth]
+env-file = \".env\"
+
+[connection]
+timeout = 180
+max-download-bytes = 20971520
+workers = 32
+ocr-workers = 2
+";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigOverrides {
     pub env_file: Option<PathBuf>,
     pub timeout: Option<u64>,
@@ -93,6 +106,109 @@ pub struct ConfigOverrides {
     pub overwrite: Option<bool>,
     pub normalize_tables: Option<bool>,
     pub okf: Option<bool>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schemars", schemars(rename = "PaperdownConfig"))]
+#[cfg_attr(
+    feature = "schemars",
+    schemars(description = "Paperdown configuration.")
+)]
+struct ConfigFile {
+    #[cfg_attr(feature = "schemars", schemars(with = "GeneralConfig"))]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(description = "Output and document-processing behavior.")
+    )]
+    general: Option<GeneralConfig>,
+    #[cfg_attr(feature = "schemars", schemars(with = "AuthConfig"))]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(description = "API authentication settings.")
+    )]
+    auth: Option<AuthConfig>,
+    #[cfg_attr(feature = "schemars", schemars(with = "ConnectionConfig"))]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(description = "Network limits and concurrency settings.")
+    )]
+    connection: Option<ConnectionConfig>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+struct GeneralConfig {
+    #[cfg_attr(feature = "schemars", schemars(with = "bool", extend("default" = false), description = "Enable verbose progress messages on stderr."))]
+    verbose: Option<bool>,
+    #[cfg_attr(feature = "schemars", schemars(with = "bool", extend("default" = false), description = "Replace the whole output folder for a PDF before processing."))]
+    overwrite: Option<bool>,
+    #[cfg_attr(feature = "schemars", schemars(with = "bool", extend("default" = false), description = "Normalize OCR HTML tables into Markdown and store raw HTML under tables/."))]
+    normalize_tables: Option<bool>,
+    #[cfg_attr(feature = "schemars", schemars(with = "bool", extend("default" = false), description = "Structure output as an Open Knowledge Format (OKF) bundle."))]
+    okf: Option<bool>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+struct AuthConfig {
+    #[cfg_attr(feature = "schemars", schemars(with = "String", extend("default" = ".env"), description = "Path to the .env file checked before environment variables for ZAI_API_KEY."))]
+    env_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+struct ConnectionConfig {
+    #[cfg_attr(feature = "schemars", schemars(with = "u64", extend("default" = 180), range(min = 1), description = "HTTP timeout in seconds for OCR requests and figure downloads."))]
+    timeout: Option<u64>,
+    #[cfg_attr(feature = "schemars", schemars(with = "u64", extend("default" = 20971520), range(min = 1), description = "Maximum allowed size in bytes for each downloaded figure."))]
+    max_download_bytes: Option<u64>,
+    #[cfg_attr(feature = "schemars", schemars(with = "usize", extend("default" = 32), range(min = 1), description = "Maximum number of PDFs processed concurrently."))]
+    workers: Option<usize>,
+    #[cfg_attr(feature = "schemars", schemars(with = "usize", extend("default" = 2), range(min = 1), description = "Maximum number of concurrent OCR API requests."))]
+    ocr_workers: Option<usize>,
+}
+
+impl ConfigFile {
+    fn into_overrides(self) -> ConfigOverrides {
+        let general = self.general.unwrap_or_default();
+        let auth = self.auth.unwrap_or_default();
+        let connection = self.connection.unwrap_or_default();
+        ConfigOverrides {
+            env_file: auth.env_file,
+            timeout: connection.timeout,
+            max_download_bytes: connection.max_download_bytes,
+            workers: connection.workers,
+            ocr_workers: connection.ocr_workers,
+            verbose: general.verbose,
+            overwrite: general.overwrite,
+            normalize_tables: general.normalize_tables,
+            okf: general.okf,
+        }
+    }
+}
+
+#[cfg(feature = "schemars")]
+pub mod schema {
+    use super::ConfigFile;
+    use std::path::PathBuf;
+
+    pub fn generate_schema() -> Result<String, serde_json::Error> {
+        let schema = schemars::schema_for!(ConfigFile);
+        let mut output = serde_json::to_string_pretty(&schema)?;
+        output.push('\n');
+        Ok(output)
+    }
+
+    pub fn schema_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("artefacts")
+            .join("paperdown.schema.json")
+    }
 }
 
 impl ConfigOverrides {
@@ -393,8 +509,9 @@ pub fn load_config_from_path(path: &Path) -> Result<ConfigOverrides, ConfigLoadE
         source,
         path: path.to_path_buf(),
     })?;
-    let config =
-        toml::from_str::<ConfigOverrides>(&content).map_err(|source| ConfigLoadError::Parse {
+    let config = toml::from_str::<ConfigFile>(&content)
+        .map(ConfigFile::into_overrides)
+        .map_err(|source| ConfigLoadError::Parse {
             source,
             path: path.to_path_buf(),
         })?;
@@ -510,7 +627,7 @@ mod tests {
         let config_root = temp.path().join("config");
         let path = config_file_path(config_root);
         std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
-        std::fs::write(&path, "timeout = 9\n").expect("write existing config");
+        std::fs::write(&path, "[connection]\ntimeout = 9\n").expect("write existing config");
 
         let err = init_config_at(path.clone(), false).expect_err("existing config is refused");
         match err {
@@ -525,7 +642,7 @@ mod tests {
         let config_root = temp.path().join("config");
         let path = config_file_path(config_root);
         std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
-        std::fs::write(&path, "timeout = 0\n").expect("write invalid config");
+        std::fs::write(&path, "[connection]\ntimeout = 0\n").expect("write invalid config");
 
         let created = init_config_at(path.clone(), true).expect("force overwrite config");
         assert_eq!(created, path);
@@ -541,8 +658,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let valid = temp.path().join("valid.toml");
         let invalid = temp.path().join("invalid.toml");
-        std::fs::write(&valid, "timeout = 9\n").expect("write valid config");
-        std::fs::write(&invalid, "timeout = 0\n").expect("write invalid config");
+        std::fs::write(&valid, "[connection]\ntimeout = 9\n").expect("write valid config");
+        std::fs::write(&invalid, "[connection]\ntimeout = 0\n").expect("write invalid config");
 
         assert_eq!(
             check_config_file(Some(&valid)).expect("valid config"),
@@ -554,13 +671,17 @@ mod tests {
 
     #[test]
     fn parses_partial_config_with_kebab_case_keys() {
-        let config: ConfigOverrides = toml::from_str(
+        let config = toml::from_str::<ConfigFile>(
             r#"
+[connection]
 timeout = 9
 max-download-bytes = 99
+
+[general]
 normalize-tables = true
 "#,
         )
+        .map(ConfigFile::into_overrides)
         .expect("parse partial config");
 
         assert_eq!(
@@ -599,7 +720,7 @@ normalize-tables = true
     #[test]
     fn rejects_unknown_input_output_fields() {
         for field in ["input", "output"] {
-            let err = toml::from_str::<ConfigOverrides>(&format!(r#"{field} = "paper.pdf""#))
+            let err = toml::from_str::<ConfigFile>(&format!(r#"{field} = "paper.pdf""#))
                 .expect_err("input and output are CLI-only");
 
             assert!(
@@ -610,12 +731,27 @@ normalize-tables = true
     }
 
     #[test]
+    fn rejects_flat_configuration_fields() {
+        let err = toml::from_str::<ConfigFile>("timeout = 9\n")
+            .expect_err("flat fields must be rejected");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_unknown_section_fields() {
+        let err = toml::from_str::<ConfigFile>("[connection]\nretries = 3\n")
+            .expect_err("unknown section fields must be rejected");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
     fn rejects_zero_numeric_values_with_field_and_path() {
         let temp = tempfile::tempdir().expect("tempdir");
 
         for field in ["timeout", "max-download-bytes", "workers", "ocr-workers"] {
             let path = temp.path().join(format!("{field}.toml"));
-            std::fs::write(&path, format!("{field} = 0\n")).expect("write config");
+            let content = format!("[connection]\n{field} = 0\n");
+            std::fs::write(&path, content).expect("write config");
 
             let err = load_config_from_path(&path).expect_err("zero numeric field is invalid");
 
@@ -638,7 +774,12 @@ normalize-tables = true
         let config_dir = temp.path().join("sub");
         std::fs::create_dir(&config_dir).expect("create config dir");
         let path = config_dir.join(CONFIG_FILE_NAME);
-        std::fs::write(&path, r#"env-file = ".env""#).expect("write config");
+        std::fs::write(
+            &path,
+            r#"[auth]
+env-file = ".env""#,
+        )
+        .expect("write config");
 
         let config = load_config_from_path(&path).expect("load config");
 
@@ -654,11 +795,16 @@ normalize-tables = true
         std::fs::write(
             global_dir.join(CONFIG_FILE_NAME),
             r#"
+[auth]
 env-file = "global.env"
+
+[connection]
 timeout = 9
 max-download-bytes = 900
 workers = 4
 ocr-workers = 5
+
+[general]
 verbose = true
 overwrite = true
 normalize-tables = true
@@ -673,9 +819,14 @@ okf = true
         std::fs::write(
             project.join(CONFIG_FILE_NAME),
             r#"
+[auth]
 env-file = "local.env"
+
+[connection]
 workers = 2
 ocr-workers = 3
+
+[general]
 overwrite = false
 "#,
         )
@@ -718,13 +869,13 @@ overwrite = false
         let global_dir = config_root.clone();
         std::fs::create_dir_all(&global_dir).expect("create global config dir");
         let global = global_dir.join(CONFIG_FILE_NAME);
-        std::fs::write(&global, "timeout = 9\n").expect("write global config");
+        std::fs::write(&global, "[connection]\ntimeout = 9\n").expect("write global config");
 
         let project = temp.path().join("project");
         let cwd = project.join("nested");
         std::fs::create_dir_all(&cwd).expect("create project dirs");
         let local = project.join(CONFIG_FILE_NAME);
-        std::fs::write(&local, "workers = 2\n").expect("write local config");
+        std::fs::write(&local, "[connection]\nworkers = 2\n").expect("write local config");
 
         let (file_config, config_files) =
             load_file_config_with_sources_from_config_dir(None, &cwd, Some(config_root))
@@ -745,8 +896,11 @@ overwrite = false
         let project = temp.path().join("project");
         let cwd = project.join("nested");
         std::fs::create_dir_all(&cwd).expect("create project dirs");
-        std::fs::write(project.join(CONFIG_FILE_NAME), "workers = 0\n")
-            .expect("write invalid local config");
+        std::fs::write(
+            project.join(CONFIG_FILE_NAME),
+            "[connection]\nworkers = 0\n",
+        )
+        .expect("write invalid local config");
 
         let explicit_dir = temp.path().join("configs");
         std::fs::create_dir(&explicit_dir).expect("create explicit config dir");
@@ -754,11 +908,16 @@ overwrite = false
         std::fs::write(
             &explicit,
             r#"
+[auth]
 env-file = "explicit.env"
+
+[connection]
 timeout = 7
 max-download-bytes = 700
 workers = 6
 ocr-workers = 4
+
+[general]
 verbose = true
 overwrite = true
 normalize-tables = true
@@ -790,6 +949,91 @@ okf = true
                 normalize_tables: true,
                 okf: true,
             }
+        );
+    }
+    #[cfg(feature = "schemars")]
+    #[test]
+    fn generated_schema_matches_runtime_contract() {
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema::generate_schema().expect("generate schema"))
+                .expect("parse generated schema");
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(schema["title"], "PaperdownConfig");
+        assert!(
+            !schema["$defs"]
+                .as_object()
+                .expect("schema definitions")
+                .is_empty()
+        );
+        jsonschema::meta::validate(&schema).expect("schema validates against its meta-schema");
+        let validator = jsonschema::validator_for(&schema).expect("compile schema validator");
+
+        let complete = serde_json::json!({
+            "general": {
+                "verbose": false,
+                "overwrite": false,
+                "normalize-tables": false,
+                "okf": false
+            },
+            "auth": {"env-file": ".env"},
+            "connection": {
+                "timeout": 180,
+                "max-download-bytes": 20971520,
+                "workers": 32,
+                "ocr-workers": 2
+            }
+        });
+        assert!(validator.is_valid(&complete));
+
+        for section in ["general", "auth", "connection"] {
+            let mut value = complete.clone();
+            value[section] = serde_json::Value::Null;
+            assert!(
+                !validator.is_valid(&value),
+                "null section accepted: {section}"
+            );
+        }
+        for (section, field) in [
+            ("general", "verbose"),
+            ("general", "overwrite"),
+            ("general", "normalize-tables"),
+            ("general", "okf"),
+            ("auth", "env-file"),
+            ("connection", "timeout"),
+            ("connection", "max-download-bytes"),
+            ("connection", "workers"),
+            ("connection", "ocr-workers"),
+        ] {
+            let mut value = complete.clone();
+            value[section][field] = serde_json::Value::Null;
+            assert!(
+                !validator.is_valid(&value),
+                "null leaf accepted: {section}.{field}"
+            );
+        }
+
+        let mut unknown_root = complete.clone();
+        unknown_root["input"] = serde_json::json!("paper.pdf");
+        assert!(!validator.is_valid(&unknown_root));
+        let mut unknown_section = complete.clone();
+        unknown_section["connection"]["retries"] = serde_json::json!(3);
+        assert!(!validator.is_valid(&unknown_section));
+        let mut zero_timeout = complete;
+        zero_timeout["connection"]["timeout"] = serde_json::json!(0);
+        assert!(!validator.is_valid(&zero_timeout));
+    }
+
+    #[cfg(feature = "schemars")]
+    #[test]
+    fn schema_artifact_matches_generated() {
+        let artifact =
+            std::fs::read_to_string(schema::schema_path()).expect("read schema artifact");
+        assert_eq!(
+            artifact,
+            schema::generate_schema().expect("generate schema")
         );
     }
 }
