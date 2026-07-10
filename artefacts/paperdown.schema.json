@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PaperdownConfig",
+  "description": "Paperdown configuration.",
+  "type": "object",
+  "properties": {
+    "auth": {
+      "description": "API authentication settings.",
+      "$ref": "#/$defs/AuthConfig"
+    },
+    "connection": {
+      "description": "Network limits and concurrency settings.",
+      "$ref": "#/$defs/ConnectionConfig"
+    },
+    "general": {
+      "description": "Output and document-processing behavior.",
+      "$ref": "#/$defs/GeneralConfig"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "AuthConfig": {
+      "type": "object",
+      "properties": {
+        "env-file": {
+          "description": "Path to the .env file checked before environment variables for ZAI_API_KEY.",
+          "type": "string",
+          "default": ".env"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConnectionConfig": {
+      "type": "object",
+      "properties": {
+        "max-download-bytes": {
+          "description": "Maximum allowed size in bytes for each downloaded figure.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 20971520,
+          "minimum": 1
+        },
+        "ocr-workers": {
+          "description": "Maximum number of concurrent OCR API requests.",
+          "type": "integer",
+          "format": "uint",
+          "default": 2,
+          "minimum": 1
+        },
+        "timeout": {
+          "description": "HTTP timeout in seconds for OCR requests and figure downloads.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 180,
+          "minimum": 1
+        },
+        "workers": {
+          "description": "Maximum number of PDFs processed concurrently.",
+          "type": "integer",
+          "format": "uint",
+          "default": 32,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "GeneralConfig": {
+      "type": "object",
+      "properties": {
+        "normalize-tables": {
+          "description": "Normalize OCR HTML tables into Markdown and store raw HTML under tables/.",
+          "type": "boolean",
+          "default": false
+        },
+        "okf": {
+          "description": "Structure output as an Open Knowledge Format (OKF) bundle.",
+          "type": "boolean",
+          "default": false
+        },
+        "overwrite": {
+          "description": "Replace the whole output folder for a PDF before processing.",
+          "type": "boolean",
+          "default": false
+        },
+        "verbose": {
+          "description": "Enable verbose progress messages on stderr.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
