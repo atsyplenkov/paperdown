@@ -16,22 +16,17 @@ Possible sections are:
 ## [Unreleased]
 
 ### Added:
-- add `--okf` output mode for Open Knowledge Format bundles with per-paper `manuscript.md`, metadata `index.md`, root `index.md`, and root `log.md` artifacts ([#16](https://github.com/atsyplenkov/paperdown/issues/16))
+- add `--okf` output mode for Open Knowledge Format bundles with per-paper `manuscript.md`, metadata `index.md`, root `index.md`, and root `log.md` artifacts (#16)
 - add `layout.json` OCR layout sidecar in OKF bundles with figure/table artifact links; document LaTeX formula preservation
-
-### Fixed:
-- create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written ([#15](https://github.com/atsyplenkov/paperdown/issues/15))
-- reject PDFs over the Z.AI OCR 50 MiB size limit before API or env-file work ([#9](https://github.com/atsyplenkov/paperdown/issues/9))
-
-## [0.3.0] - 2026-07-04
-
-### Added:
+- add configuration schema at `artefacts/paperdown.schema.json` (#18)
 - add shared `paperdown.toml` configuration support with global, local, and explicit `--config` loading
 - add CLI overrides for config-backed boolean settings with `--quiet`, `--no-overwrite`, and `--no-normalize-tables`
 
 ### Fixed:
-- avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance ([#7](https://github.com/atsyplenkov/paperdown/issues/7))
-- align skip and output-reuse behavior with marker-based semantics: skip only when `<output>/<pdf_stem>/log.jsonl` exists; otherwise refresh managed artifacts and continue processing ([#11](https://github.com/atsyplenkov/paperdown/issues/11))
+- avoid Z.AI OCR rate-limit failures in large batch runs by introducing OCR-specific concurrency control (`--ocr-workers`) and clearer HTTP 429 guidance (#7)
+- align skip and output-reuse behavior with marker-based semantics: skip only when `<output>/<pdf_stem>/log.jsonl` exists; otherwise refresh managed artifacts and continue processing (#11)
+- create `figures/` and `tables/` output directories only when downloaded figures or raw OCR table artifacts are written (#15)
+- reject PDFs over the Z.AI OCR 50 MiB size limit before API or env-file work (#9)
 
 ## [0.2.0] - 2026-03-18
 

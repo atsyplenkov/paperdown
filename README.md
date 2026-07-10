@@ -153,7 +153,7 @@ Options:
 
 ## Configuration
 
-`paperdown` can read shared defaults from `paperdown.toml`. Runtime settings such as API key file, timeouts, worker counts, verbosity, overwrite behavior, table normalization, and OKF output can be configured. `--input`, `--output`, and `--config` stay CLI-only so each run still names the source PDFs, output root, and config source explicitly.
+`paperdown` can read shared defaults from `paperdown.toml`, organized into `[general]`, `[auth]`, and `[connection]` sections. Runtime settings such as API key file, timeouts, worker counts, verbosity, overwrite behavior, table normalization, and OKF output can be configured. `--input`, `--output`, and `--config` stay CLI-only so each run still names the source PDFs, output root, and config source explicitly.
 
 Default config locations:
 
@@ -167,15 +167,20 @@ Precedence with `--config <PATH>`: CLI overrides > that config file > built-in d
 Example:
 
 ```toml
-env-file = ".env"
-timeout = 180
-max-download-bytes = 20971520
-workers = 32
-ocr-workers = 2
+[general]
 verbose = false
 overwrite = false
 normalize-tables = false
 okf = false
+
+[auth]
+env-file = ".env"
+
+[connection]
+timeout = 180
+max-download-bytes = 20971520
+workers = 32
+ocr-workers = 2
 ```
 
 Relative `env-file` values in TOML are resolved relative to the TOML file directory. CLI `--env` paths keep normal current-working-directory behavior.
