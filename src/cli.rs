@@ -1,5 +1,5 @@
-use crate::config;
 use clap::{ArgAction, Args, Parser, Subcommand};
+use paperdown::config;
 use std::path::PathBuf;
 
 const TOP_LEVEL_HELP_TEMPLATE: &str = r#"Usage: paperdown [OPTIONS] [COMMAND]

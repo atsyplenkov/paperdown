@@ -1,5 +1,5 @@
 mod cli;
-mod config;
+use paperdown::config;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
